@@ -1,6 +1,6 @@
 const app = document.querySelector('#app')
 const dialog = document.querySelector('#dialog')
-const state = { page: 'overview', server: 'all', servers: [], query: '', type: '', libraryPage: 1, request: 0, authenticated: false, detail: null }
+const state = { page: 'overview', server: 'all', servers: [], query: '', type: '', libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
 const titles = { overview: '概览', library: '片库', settings: '服务器设置' }
 const statuses = { online: '在线', offline: '离线', partial: '部分可用', denied: '认证 / 权限异常', pending: '等待同步', error: '同步异常' }
 const datasetNames = { catalog: '片库', views: '媒体库', latest: '最近入库', resume: '继续观看' }
@@ -42,7 +42,7 @@ function shell() {
     <nav aria-label="主要导航">${[['overview', '▦'], ['library', '▤'], ['settings', '⚙']].map(([key, icon]) => `<button data-nav="${key}" ${state.page === key ? 'aria-current="page"' : ''}><span class="nav-icon" aria-hidden="true">${icon}</span>${titles[key]}</button>`).join('')}</nav>
     <div class="sidebar-bottom"><small>个人媒体，清晰呈现</small><p>一个账号 · 多个 Emby<br>仅展示账号可见内容</p><button class="subtle" data-action="logout">退出登录</button></div></aside>
     <div><header class="topbar"><span class="topbar-label">我的媒体空间 / <span id="breadcrumb">${titles[state.page]}</span></span>
-      <div class="server-switch"><label for="server-select">数据来源</label><select id="server-select" aria-label="选择服务器"></select><button class="subtle" data-action="logout" aria-label="退出登录">退出</button></div></header>
+      <div class="server-switch"><button data-action="toggle-blur" aria-pressed="true">NSFW 海报：已虚化</button><label for="server-select">数据来源</label><select id="server-select" aria-label="选择服务器"></select><button class="subtle" data-action="logout" aria-label="退出登录">退出</button></div></header>
       <main id="content"><div class="empty">正在读取本地缓存…</div></main></div></div>`
   updateServers()
 }
@@ -51,7 +51,7 @@ function updateServers() {
   const select = document.querySelector('#server-select')
   if (!select) return
   if (state.server !== 'all' && !state.servers.some(server => server.id === state.server)) state.server = 'all'
-  select.innerHTML = `<option value="all">全部服务器 · 汇总视图</option>${state.servers.map(server => `<option value="${e(server.id)}">${e(server.name)}</option>`).join('')}`
+  select.innerHTML = `<option value="all">全部服务器 · 汇总视图</option>${state.servers.map(server => `<option value="${e(server.id)}">${e(server.name)}${server.nsfw ? ' · NSFW' : ''}</option>`).join('')}`
   select.value = state.server
 }
 
@@ -71,6 +71,30 @@ function datasetNotice(servers, kind) {
   return `<p class="notice">${errors.map(server => `${e(server.name)}：${e(server.datasets[kind].error || server.datasets[kind].warning || (server.datasets[kind].available ? '缓存待更新' : '尚无可用数据'))}${server.datasets[kind].updatedAt ? `（缓存 ${date(server.datasets[kind].updatedAt)}）` : ''}`).join('；')}</p>`
 }
 
+function sensitive(item) {
+  return (item.sources || [item]).some(source => source.nsfw || state.servers.find(server => server.id === source.serverId)?.nsfw)
+}
+
+function posterButton(item, detail = false) {
+  const key = `${item.serverId}:${item.id}`
+  const nsfw = sensitive(item)
+  const blurred = nsfw && state.blurNsfw && !state.revealed.has(key)
+  return `<button class="poster${blurred ? ' blurred' : ''}" data-poster-key="${e(key)}" data-sensitive="${nsfw}" data-title="${e(item.title)}" ${detail ? '' : `data-item="${e(item.id)}" data-server="${e(item.serverId)}"`} aria-label="${blurred ? '解除此海报虚化' : `查看 ${e(item.title)}`}">${poster(item)}<span class="blur-label" ${blurred ? '' : 'hidden'}>NSFW · 点击显示</span></button>`
+}
+
+function updatePosters() {
+  document.querySelectorAll('[data-poster-key]').forEach(button => {
+    const blurred = button.dataset.sensitive === 'true' && state.blurNsfw && !state.revealed.has(button.dataset.posterKey)
+    button.classList.toggle('blurred', blurred)
+    button.querySelector('.blur-label').hidden = !blurred
+    button.setAttribute('aria-label', blurred ? '解除此海报虚化' : `查看 ${button.dataset.title}`)
+  })
+  document.querySelectorAll('[data-action="toggle-blur"]').forEach(button => {
+    button.textContent = state.blurNsfw ? 'NSFW 海报：已虚化' : 'NSFW 海报：已显示'
+    button.setAttribute('aria-pressed', String(state.blurNsfw))
+  })
+}
+
 function poster(item) {
   return `<span class="poster-placeholder"><b aria-hidden="true">映</b>暂无海报</span>${item.imageTag ? `<img src="${itemPath(item)}/poster" alt="${e(item.title)}海报" loading="lazy">` : ''}`
 }
@@ -80,10 +104,10 @@ function mediaCards(items, resume = false) {
   return `<div class="poster-grid">${items.map(item => {
     const sources = item.sources || [item]
     const progress = resume && item.runtimeTicks > 0 && item.positionTicks !== null ? Math.min(100, Math.max(0, item.positionTicks / item.runtimeTicks * 100)) : null
-    return `<article class="media-card"><button class="poster" data-item="${e(item.id)}" data-server="${e(item.serverId)}" aria-label="查看 ${e(item.title)}">${poster(item)}</button>
+    return `<article class="media-card">${posterButton(item)}
       <button class="card-title" data-item="${e(item.id)}" data-server="${e(item.serverId)}" title="${e(item.title)}">${e(item.title)}</button>
       <div class="card-meta"><span>${item.year ?? '年份未知'} · ${{ Movie: '电影', Series: '电视剧', Episode: '单集', Season: '季' }[item.type] || '媒体'}</span><span class="rating">${item.rating != null ? `★ ${item.rating.toFixed(1)}` : ''}</span></div>
-      <div class="sources">${sources.map(source => `<button class="source" data-item="${e(source.id)}" data-server="${e(source.serverId)}" title="查看此服务器条目">${e(source.serverName || state.servers.find(server => server.id === source.serverId)?.name || '服务器')}</button>`).join('')}</div>
+      <div class="sources">${sources.map(source => `<button class="source" data-item="${e(source.id)}" data-server="${e(source.serverId)}" title="查看此服务器条目">${e(source.serverName || state.servers.find(server => server.id === source.serverId)?.name || '服务器')}${source.nsfw || state.servers.find(server => server.id === source.serverId)?.nsfw ? ' · NSFW' : ''}</button>`).join('')}</div>
       ${item.conflict ? '<div class="conflict">编号冲突 · 独立保留</div>' : ''}
       ${progress !== null ? `<progress value="${progress}" max="100" aria-label="当前账号观看进度"></progress><small>已观看 ${Math.round(progress)}%</small>` : ''}</article>`
   }).join('')}</div>`
@@ -115,17 +139,18 @@ function overview(data) {
 function library(data) {
   return heading('我的片库', '跨服务器浏览电影与电视剧，每个来源都清晰可查。', '<button data-action="refresh">↻ 刷新数据</button>') +
     `<form class="filters" id="search-form"><label>搜索作品<input id="search" name="q" type="search" placeholder="输入电影或电视剧名称" value="${e(state.query)}" maxlength="200"></label>
+    <label>服务器<select id="library-server-select" aria-label="片库服务器"><option value="all">全部服务器 · 汇总</option>${state.servers.map(server => `<option value="${e(server.id)}" ${state.server === server.id ? 'selected' : ''}>${e(server.name)}${server.nsfw ? ' · NSFW' : ''}</option>`).join('')}</select></label>
     <label>媒体类型<select id="type-select"><option value="">全部类型</option><option value="Movie" ${state.type === 'Movie' ? 'selected' : ''}>电影</option><option value="Series" ${state.type === 'Series' ? 'selected' : ''}>电视剧</option></select></label><button type="submit">搜索</button></form>
     ${statusCards(data.servers)}${datasetNotice(data.servers, 'catalog')}
     <section class="panel"><div class="section-title"><h2>${data.total === null ? '作品数量不可用' : `${count(data.total)} 部作品`}</h2><small>有效编号去重 · 已知 ${data.knownServers} / ${data.servers.length} 台 · 每页 ${data.pageSize} 部</small></div>
-    ${data.items.length ? mediaCards(data.items) : '<div class="empty">没有匹配的作品。可调整搜索词、类型或顶部服务器筛选。</div>'}
+    ${data.items.length ? mediaCards(data.items) : '<div class="empty">没有匹配的作品。可调整搜索词、类型或服务器筛选。</div>'}
     <div class="pagination"><button data-page="${data.page - 1}" ${data.page === 1 ? 'disabled' : ''}>上一页</button><span>第 ${data.page} / ${data.pages} 页</span><button data-page="${data.page + 1}" ${data.page >= data.pages ? 'disabled' : ''}>下一页</button></div></section>`
 }
 
 function settings() {
   return heading('服务器设置', '一个 Emby，一个账号。连接信息仅保存在本地。', '<button class="primary" data-action="add">＋ 添加服务器</button>') +
     '<p class="notice">填写 Emby 登录账号即可，无需管理员 API Key。账号密码及令牌加密存储；修改地址或账号会清除该连接的旧缓存。</p>' +
-    (state.servers.length ? `<div class="settings-grid">${state.servers.map(server => `<article class="panel settings-card"><div class="status-title"><h2>${e(server.name)}</h2>${statusLabel(server)}</div><p class="address">${e(server.url)}</p>
+    (state.servers.length ? `<div class="settings-grid">${state.servers.map(server => `<article class="panel settings-card"><div class="status-title"><h2>${e(server.name)}${server.nsfw ? ' <span class="nsfw-tag">NSFW</span>' : ''}</h2>${statusLabel(server)}</div><p class="address">${e(server.url)}</p>
     ${server.error ? `<div class="warning">${e(server.error)}</div>` : ''}
     ${Object.entries(datasetNames).map(([kind, label]) => `<div class="dataset"><span>${label}</span><b>${server.datasets[kind].available ? `${date(server.datasets[kind].updatedAt)}${server.datasets[kind].stale ? ' · 旧缓存' : ''}` : '不可用 / 尚未同步'}${server.datasets[kind].error ? `<br><small>${e(server.datasets[kind].error)}</small>` : ''}</b></div>`).join('')}
     <div class="actions"><button data-edit="${e(server.id)}">编辑</button><button data-refresh="${e(server.id)}" ${server.syncing ? 'disabled' : ''}>同步</button><button class="subtle danger" data-delete="${e(server.id)}">删除</button></div></article>`).join('')}</div>` : emptyConnections())
@@ -148,6 +173,7 @@ async function loadView({ preserveSearch = false } = {}) {
     document.querySelector('#breadcrumb').textContent = titles[page]
     document.querySelectorAll('[data-nav]').forEach(button => button.toggleAttribute('aria-current', button.dataset.nav === page))
     document.querySelectorAll('nav [aria-current]').forEach(button => button.setAttribute('aria-current', 'page'))
+    updatePosters()
     if (data?.page) state.libraryPage = data.page
     if (focused) {
       const input = document.querySelector('#search')
@@ -171,6 +197,7 @@ function editServer(id) {
     <label>服务器地址<input name="url" type="url" value="${e(server?.url || '')}" placeholder="https://emby.example.com" required><small>支持端口和反向代理路径；不含用户名、密码或查询参数。</small></label>
     <label>Emby 用户名<input name="username" autocomplete="off" maxlength="256" ${server ? 'placeholder="留空保留原账号"' : 'required'}></label>
     <label>Emby 密码<input name="password" type="password" autocomplete="new-password" maxlength="1024" ${server ? 'placeholder="留空保留原密码"' : ''}><small>${server ? '凭据不回传浏览器。更换账号时请同时填写新密码。' : '支持 Emby 无密码账号；使用 HTTP 时凭据在到 Emby 的网络链路上不加密。'}</small></label>
+    <label class="checkbox-label"><input name="nsfw" type="checkbox" ${server?.nsfw ? 'checked' : ''}>标记为 NSFW，默认虚化此服务器海报</label><small>仅影响本地显示；可一键显示或点击单张海报解除虚化。刷新页面后恢复虚化。</small>
     <p class="form-error" id="server-error" role="alert"></p><div class="dialog-footer"><button type="button" data-action="close">取消</button><button class="primary" type="submit">保存并同步</button></div></form>`)
 }
 
@@ -181,7 +208,7 @@ async function showDetail(serverId, id, params = new URLSearchParams()) {
   try {
     const item = await api(`${itemPath({ serverId, id })}?${params}`)
     if (state.detail !== identity || !dialog.open) return
-    openDialog('作品详情', `<div class="detail-top"><div class="poster">${poster(item)}</div><div><h1>${e(item.title)}</h1><p class="muted">${item.year ?? '年份未知'} · ${{ Movie: '电影', Series: '电视剧', Episode: '单集', Season: '季' }[item.type] || '媒体'}${item.rating == null ? '' : ` · ★ ${item.rating.toFixed(1)}`}</p>
+    openDialog('作品详情', `<div class="detail-top">${posterButton(item, true)}<div><h1>${e(item.title)}</h1><p class="muted">${item.year ?? '年份未知'} · ${{ Movie: '电影', Series: '电视剧', Episode: '单集', Season: '季' }[item.type] || '媒体'}${item.rating == null ? '' : ` · ★ ${item.rating.toFixed(1)}`}</p>
       <div class="metadata">${item.genres.map(genre => `<span>${e(genre)}</span>`).join('')}</div><small>${item.seriesName ? `${e(item.seriesName)} · ` : ''}${item.season != null ? `第 ${item.season} 季 ` : ''}${item.episode != null ? `第 ${item.episode} ${item.type === 'Season' ? '季' : '集'}` : ''}</small></div></div>
       <p class="detail-overview">${e(item.overview || '当前接口未提供简介。')}</p>
       <div class="detail-source"><strong>资源来源：${e(item.serverName)}</strong><br>仅对应此服务器的条目，其他来源请点击片库卡片上的来源标签。<br>缓存时间：${date(item.cache.updatedAt)}${item.cache.stale ? ' · 旧缓存' : ''}${item.cache.warning ? `<br>${e(item.cache.warning)}` : ''}</div>
@@ -197,7 +224,14 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button')
   if (!button) return
   try {
-    if (button.dataset.nav) {
+    if (button.dataset.action === 'toggle-blur') {
+      state.blurNsfw = !state.blurNsfw
+      state.revealed.clear()
+      updatePosters()
+    } else if (button.dataset.posterKey && button.classList.contains('blurred')) {
+      state.revealed.add(button.dataset.posterKey)
+      updatePosters()
+    } else if (button.dataset.nav) {
       state.page = button.dataset.nav
       state.libraryPage = 1
       await loadView()
@@ -229,6 +263,8 @@ document.addEventListener('click', async event => {
     else if (button.dataset.action === 'logout') {
       await api('/api/auth/logout', 'POST', {})
       state.authenticated = false
+      state.blurNsfw = true
+      state.revealed.clear()
       state.request++
       await boot()
     }
@@ -236,7 +272,7 @@ document.addEventListener('click', async event => {
 })
 
 document.addEventListener('change', async event => {
-  if (event.target.id === 'server-select') {
+  if (['server-select', 'library-server-select'].includes(event.target.id)) {
     state.server = event.target.value
     state.libraryPage = 1
     await loadView()
@@ -279,6 +315,7 @@ document.addEventListener('submit', async event => {
       await boot()
     } else if (form.id === 'server-form') {
       const data = Object.fromEntries(new FormData(form))
+      data.nsfw = form.elements.nsfw.checked
       const id = form.dataset.id
       await api(`/api/servers${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', data)
       form.reset()

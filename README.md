@@ -86,3 +86,7 @@ scripts/          演示、云端打包、容器验收
 ```
 
 接口依据：[Emby 用户认证](https://dev.emby.media/doc/restapi/User-Authentication.html)、[用户片库读取](https://dev.emby.media/doc/restapi/Browsing-the-Library.html)、[ItemsService](https://dev.emby.media/reference/RestAPI/ItemsService.html)。真实 Emby 版本、反向代理和账号权限仍需要使用自己的连接进行实机验证。
+
+### 按服务器浏览与 NSFW 海报
+
+片库筛选栏可直接选择某台 Emby，与顶部「数据来源」联动；切换服务器、搜索或类型时回到第一页。在「服务器设置 → 编辑」勾选 NSFW 后，该连接的海报默认虚化，汇总作品任一来源带标签也会虚化。顶部按钮可一键显示或重新虚化，点击单张虚化海报只解除这一张，再次点击打开详情。标题和来源仍可直接打开详情，详情海报遵循相同规则。解锁只保留在当前页面会话，刷新或退出后恢复虚化；标签持久保存。该功能是显示偏好，图片仍会由浏览器加载。

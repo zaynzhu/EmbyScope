@@ -39,6 +39,9 @@ export class Store {
         PRIMARY KEY(serverId, itemId, tag)
       );
     `)
+    if (!this.db.prepare('PRAGMA table_info(servers)').all().some(column => column.name === 'nsfw')) {
+      this.db.exec('ALTER TABLE servers ADD COLUMN nsfw INTEGER NOT NULL DEFAULT 0')
+    }
   }
 
   encrypt(value) {

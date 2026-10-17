@@ -22,7 +22,7 @@ export class Service {
       }
     }
     const warning = datasets.catalog.warning
-    return { id, name, url, status: status === 'online' && warning ? 'partial' : status,
+    return { id, name, url, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
       error: error || warning, attemptedAt, syncing: this.jobs.has(id), datasets }
   }
   catalogWarning(cache) {
@@ -38,6 +38,8 @@ export class Service {
     if (id && !previous) throw new RemoteError('连接不存在', 404)
     if (this.store.servers().some(row => row.url === url && row.id !== id)) throw new RemoteError('此地址已有连接，请编辑已有连接', 400)
     if (!previous && this.store.servers().length >= 30) throw new RemoteError('最多保存 30 台服务器', 400)
+    if (body.nsfw !== undefined && typeof body.nsfw !== 'boolean') throw new RemoteError('NSFW 标签必须为布尔值', 400)
+    const nsfw = body.nsfw === undefined ? !!previous?.nsfw : body.nsfw
     const oldSecret = previous ? this.store.decrypt(previous.secret) : {}
     const username = body.username || oldSecret.username
     const password = body.password === undefined || (previous && body.password === '') ? oldSecret.password : body.password
@@ -57,6 +59,7 @@ export class Service {
       } else {
         this.store.db.prepare('INSERT INTO servers(id,name,url,secret) VALUES(?,?,?,?)').run(id, body.name.trim(), url, this.store.encrypt(secret))
       }
+      this.store.db.prepare('UPDATE servers SET nsfw=? WHERE id=?').run(Number(nsfw), id)
       this.store.db.exec('COMMIT')
     } catch (error) {
       this.store.db.exec('ROLLBACK')
@@ -155,7 +158,7 @@ export class Service {
     return selected
   }
   collect(rows, kind) {
-    return rows.flatMap(row => (this.store.cache(row.id, kind)?.data || []).map(item => ({ ...item, serverName: row.name })))
+    return rows.flatMap(row => (this.store.cache(row.id, kind)?.data || []).map(item => ({ ...item, serverName: row.name, nsfw: !!row.nsfw })))
   }
   overview(serverId) {
     const rows = this.selected(serverId)
@@ -214,7 +217,7 @@ export class Service {
     const total = episodes.length
     const pages = Math.max(1, Math.ceil(total / 50))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
-    return { ...item, serverName: this.store.server(serverId).name, seasons,
+    return { ...item, serverName: this.store.server(serverId).name, nsfw: !!this.store.server(serverId).nsfw, seasons,
       episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: catalog?.data && !this.catalogWarning(catalog) ? total : null,
       episodePage: page, episodePages: pages, cache: this.publicServer(this.store.server(serverId)).datasets.catalog }
   }

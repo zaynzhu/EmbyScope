@@ -187,3 +187,30 @@ test('异常分页不替换上次完整缓存，认证过期清除旧权限数�
   assert.equal(f.app.service.overview(id).resume.length, 0)
   assert.equal(f.app.store.decrypt(f.app.store.server(id).secret).token, undefined)
 })
+
+test('NSFW 标签持久化且支持编辑，片库服务器筛选保留来源隔离', async t => {
+  const f = await fixture(t)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const aId = await f.connect(f.a, '影院 A')
+  const bId = await f.connect(f.b, '影院 B')
+  await f.app.service.drain()
+  const changed = await f.request(`/api/servers/${aId}`, 'PUT', { name: '影院 A', url: f.a.url, nsfw: true })
+  assert.equal(changed.data.nsfw, true)
+  await f.app.service.drain()
+  assert.equal(f.app.store.server(aId).nsfw, 1)
+  assert.equal(f.app.store.server(bId).nsfw, 0)
+  const merged = (await f.request('/api/library')).data.items.find(item => item.sources.length === 2)
+  assert.ok(merged.sources.some(source => source.serverId === aId && source.nsfw))
+  for (const id of [aId, bId]) {
+    const single = (await f.request(`/api/library?server=${id}&pageSize=5&page=2`)).data
+    assert.equal(single.page, 2)
+    assert.equal(single.total, 32)
+    assert.ok(single.items.every(item => item.sources.every(source => source.serverId === id && source.nsfw === (id === aId))))
+  }
+  assert.equal((await f.request(`/api/items/${aId}/1`)).data.nsfw, true)
+  assert.equal((await f.request(`/api/overview?server=${aId}`)).data.latest[0].nsfw, true)
+  assert.equal((await f.request(`/api/servers/${aId}`, 'PUT', { name: '改名', url: f.a.url })).data.nsfw, true)
+  await f.app.service.drain()
+  assert.equal((await f.request(`/api/servers/${aId}`, 'PUT', { name: '影院 A', url: f.a.url, nsfw: 'false' })).status, 400)
+  assert.equal((await f.request(`/api/servers/${aId}`, 'PUT', { name: '影院 A', url: f.a.url, nsfw: false })).data.nsfw, false)
+})
