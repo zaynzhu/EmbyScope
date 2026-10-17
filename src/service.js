@@ -1,3 +1,4 @@
+import { resourceLocations } from './resources.js'
 import { randomUUID } from 'node:crypto'
 import { normalizeItem, groupWorks } from './identity.js'
 import { normalizeUrl, RemoteError } from './emby.js'
@@ -12,6 +13,7 @@ export class Service {
     this.seasonJobs = new Map()
     this.catalogProgress = new Map()
     this.detailJobs = new Map()
+    this.resourceJobs = new Map()
     this.stopping = false
   }
   publicServer(row) {
@@ -22,11 +24,11 @@ export class Service {
       datasets[kind] = {
         available: cache?.data != null, updatedAt: cache?.updatedAt || null, error: cache?.error || null,
         warning: kind === 'catalog' ? this.catalogWarning(cache) : null,
-        stale: !!cache?.data && (!!cache.error || Date.now() - Date.parse(cache.updatedAt) > this.cacheMinutes * 60000)
+        stale: !!cache?.data && (!!cache.error || ['offline', 'denied', 'error'].includes(status) || Date.now() - Date.parse(cache.updatedAt) > (kind === 'catalog' ? (row.fullHours || 24) * 3600000 : row.lightMinutes * 60000))
       }
     }
     const warning = datasets.catalog.warning
-    return { id, name, url, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
+    return { id, name, url, lightMinutes: row.lightMinutes, fullHours: row.fullHours, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
       error: error || warning, attemptedAt, syncing: this.jobs.has(id), catalogProgress: this.catalogProgress.get(id) || null, episodeSync: this.episodeSummary(row), datasets }
   }
   catalogWarning(cache) {
@@ -44,6 +46,9 @@ export class Service {
     if (!previous && this.store.servers().length >= 30) throw new RemoteError('最多保存 30 台服务器', 400)
     if (body.nsfw !== undefined && typeof body.nsfw !== 'boolean') throw new RemoteError('NSFW 标签必须为布尔值', 400)
     const nsfw = body.nsfw === undefined ? !!previous?.nsfw : body.nsfw
+    const lightMinutes = body.lightMinutes ?? previous?.lightMinutes ?? Math.min(1440, Math.max(15, Math.round(this.cacheMinutes)))
+    const fullHours = body.fullHours ?? previous?.fullHours ?? 24
+    if (!Number.isInteger(lightMinutes) || lightMinutes < 15 || lightMinutes > 1440 || ![0, 12, 24, 48, 168].includes(fullHours)) throw new RemoteError('更新周期无效', 400)
     const oldSecret = previous ? this.store.decrypt(previous.secret) : {}
     const username = body.username || oldSecret.username
     const password = body.password === undefined || (previous && body.password === '') ? oldSecret.password : body.password
@@ -54,8 +59,8 @@ export class Service {
     this.store.db.exec('BEGIN')
     try {
       if (previous) {
-        this.store.db.prepare('UPDATE servers SET name=?,url=?,secret=?,revision=revision+1,status=?,error=NULL WHERE id=?')
-          .run(body.name.trim(), url, this.store.encrypt(secret), changed ? 'pending' : previous.status, id)
+        this.store.db.prepare('UPDATE servers SET name=?,url=?,secret=?,revision=revision+?,status=?,error=? WHERE id=?')
+          .run(body.name.trim(), url, this.store.encrypt(secret), Number(changed), changed ? 'pending' : previous.status, changed ? null : previous.error, id)
         if (changed) {
           this.store.db.prepare('DELETE FROM cache WHERE serverId=?').run(id)
           this.store.db.prepare('DELETE FROM images WHERE serverId=?').run(id)
@@ -63,7 +68,7 @@ export class Service {
       } else {
         this.store.db.prepare('INSERT INTO servers(id,name,url,secret) VALUES(?,?,?,?)').run(id, body.name.trim(), url, this.store.encrypt(secret))
       }
-      this.store.db.prepare('UPDATE servers SET nsfw=? WHERE id=?').run(Number(nsfw), id)
+      this.store.db.prepare('UPDATE servers SET nsfw=?,lightMinutes=?,fullHours=? WHERE id=?').run(Number(nsfw), lightMinutes, fullHours, id)
       this.store.db.exec('COMMIT')
     } catch (error) {
       this.store.db.exec('ROLLBACK')
@@ -71,19 +76,19 @@ export class Service {
     }
     // 旧任务只能读取旧版本，不允许把旧账号的数据写回新连接。
     const running = this.jobs.get(id)
-    if (running) running.finally(() => this.refresh(id)).catch(() => {})
-    else this.refresh(id)
+    if (changed && running) running.finally(() => this.refresh(id)).catch(() => {})
+    else if (changed) this.refresh(id)
     return this.publicServer(this.store.server(id))
   }
   deleteServer(id) {
     if (!this.store.server(id)) throw new RemoteError('连接不存在', 404)
     this.store.db.prepare('DELETE FROM servers WHERE id=?').run(id)
   }
-  refresh(id) {
+  refresh(id, { full = true } = {}) {
     if (this.jobs.has(id)) return this.jobs.get(id)
     const row = this.store.server(id)
     if (!row) return Promise.resolve()
-    const job = this.sync(row).catch(() => {
+    const job = this.sync(row, { full }).catch(() => {
       if (this.current(row)) this.store.db.prepare("UPDATE servers SET status='error',error='同步失败，未完整更新' WHERE id=?").run(id)
     }).finally(() => {
       this.jobs.delete(id)
@@ -119,9 +124,10 @@ export class Service {
       throw error
     }
   }
-  async sync(row) {
+  async sync(row, { full = true } = {}) {
     let secret = this.store.decrypt(row.secret)
     this.store.db.prepare('UPDATE servers SET attemptedAt=? WHERE id=?').run(new Date().toISOString(), row.id)
+    if (full) this.store.saveCache(row.id, 'fullAttempt', { at: Date.now() })
     try {
       if (!secret.token) {
         secret = await this.client.login(row, secret)
@@ -155,6 +161,7 @@ export class Service {
           return result.Items.map(item => normalizeItem(item, row.id))
         }
       }
+      if (!full) delete tasks.catalog
       let partial = false
       for (const [kind, task] of Object.entries(tasks)) {
         if (!this.current(row)) return
@@ -179,7 +186,7 @@ export class Service {
     } catch (error) {
       if (this.stopping || !this.current(row)) return
       const safe = error instanceof RemoteError ? error : new RemoteError('接口数据格式不完整')
-      for (const kind of ['catalog', 'views', 'latest', 'resume']) this.failCache(row, kind, safe)
+      for (const kind of (full ? ['catalog', 'views', 'latest', 'resume'] : ['views', 'latest', 'resume'])) this.failCache(row, kind, safe)
       if (safe.status === 401) {
         this.invalidateAuth(row, safe)
         return
@@ -198,7 +205,7 @@ export class Service {
     let total = 0
     let failed = 0
     let oldest = null
-    const ttl = Math.max(1440, this.cacheMinutes) * 60000
+    const ttl = Math.max(10080, this.cacheMinutes) * 60000
     for (const item of series) {
       const cache = caches.get(item.id)
       if (cache?.error) failed++
@@ -211,15 +218,16 @@ export class Service {
     return { completed, series: series.length, failed, knownEpisodes: total,
       total: catalog?.data && completed === series.length ? total : null,
       updatedAt: oldest, stale: failed > 0 || !!oldest && Date.now() - Date.parse(oldest) > ttl,
-      syncing: this.seasonJobs.has(row.id), cacheHours: Math.max(1440, this.cacheMinutes) / 60 }
+      syncing: this.seasonJobs.has(row.id), batchSize: 20, batchMinutes: 5, cacheHours: Math.max(10080, this.cacheMinutes) / 60 }
   }
   startSeasonSync(row) {
+    if (Date.now() - (this.store.cache(row.id, 'seasonBatch')?.data?.at || 0) < 5 * 60000) return
     if (this.stopping || this.seasonJobs.has(row.id) || !this.seasonMode(row.id) || !this.current(row)) return
     if (Date.now() - (this.store.cache(row.id, 'seasonRetry')?.data?.at || 0) < this.cacheMinutes * 60000) return
     const secret = this.store.decrypt(this.store.server(row.id).secret)
     if (!secret.token) return
     const series = (this.store.cache(row.id, 'catalog')?.data || []).filter(item => item.type === 'Series')
-    const ttl = Math.max(1440, this.cacheMinutes) * 60000
+    const ttl = Math.max(10080, this.cacheMinutes) * 60000
     const pending = series.filter(item => {
       const cache = this.store.cache(row.id, `seasons:${item.id}`)
       if (cache?.error && Date.now() - (this.store.cache(row.id, `seasonAttempt:${item.id}`)?.data?.at || 0) < this.cacheMinutes * 60000) return false
@@ -227,7 +235,8 @@ export class Service {
     })
     if (!pending.length) return
     const job = (async () => {
-      for (const item of pending) {
+      this.store.saveCache(row.id, 'seasonBatch', { at: Date.now() })
+      for (const item of pending.slice(0, 20)) {
         if (this.stopping || !this.current(row)) return
         const kind = `seasons:${item.id}`
         try {
@@ -255,6 +264,7 @@ export class Service {
   }
   async readDetail(serverId, itemId, params) {
     const item = this.findItem(serverId, itemId)
+    await this.readResources(serverId, itemId)
     const seriesId = item.type === 'Series' ? item.id : item.seriesId
     if (seriesId && this.seasonMode(serverId)) {
       const row = this.store.server(serverId)
@@ -284,6 +294,43 @@ export class Service {
     }
     return this.detail(serverId, itemId, params)
   }
+  async readResources(serverId, itemId) {
+    this.findItem(serverId, itemId)
+    const row = this.store.server(serverId)
+    const kind = `resources:${itemId}`
+    const cached = this.store.cache(serverId, kind)
+    const attempt = this.store.cache(serverId, `resourceAttempt:${itemId}`)?.data?.at || 0
+    const key = `${serverId}:${row.revision}:${itemId}`
+    if ((!cached?.data || Date.now() - Date.parse(cached.updatedAt) > 86400000) && Date.now() - attempt > 60000) {
+      if (!this.resourceJobs.has(key)) {
+        const job = (async () => {
+          try {
+            const secret = this.store.decrypt(row.secret)
+            if (!secret.token) throw new RemoteError('登录失效，请刷新连接', 401)
+            const raw = await this.client.request(row, `/Users/${encodeURIComponent(secret.userId)}/Items/${encodeURIComponent(itemId)}?Fields=Path,MediaSources`, { token: secret.token })
+            if (raw.Id !== itemId) throw new RemoteError('资源详情标识不一致')
+            if (this.current(row)) this.store.saveCache(serverId, kind, resourceLocations(raw))
+          } catch (error) {
+            const safe = error instanceof RemoteError ? error : new RemoteError('资源详情响应不完整')
+            if (safe.status === 401) this.invalidateAuth(row, safe)
+            else {
+              if (safe.status === 404 && this.current(row)) this.store.db.prepare('DELETE FROM cache WHERE serverId=? AND kind=?').run(serverId, kind)
+              this.failCache(row, kind, safe)
+            }
+          } finally {
+            if (this.current(row)) this.store.saveCache(serverId, `resourceAttempt:${itemId}`, { at: Date.now() })
+          }
+        })().finally(() => this.resourceJobs.delete(key))
+        this.resourceJobs.set(key, job)
+      }
+      await this.resourceJobs.get(key)
+      if (!this.current(row)) throw new RemoteError('连接已变更，请重新打开', 409)
+    }
+    const result = this.store.cache(serverId, kind)
+    return { locations: result?.data?.locations || [], hiddenRemote: result?.data?.hiddenRemote || false,
+      error: result?.error || null, updatedAt: result?.updatedAt || null,
+      stale: !!result?.data && (!!result.error || Date.now() - Date.parse(result.updatedAt) > 86400000) }
+  }
   selected(serverId) {
     const servers = this.store.servers()
     if (!serverId || serverId === 'all') return servers
@@ -311,6 +358,8 @@ export class Service {
       stats: { movies: count('Movie'), series: count('Series'), episodes: limitedServers || episodesUnknown || !rows.length ? null : episodeTotal,
         libraries: viewsKnown ? this.collect(rows, 'views').length : null,
         entries: known ? works.length : null, uniqueWorks: known ? groups.length : null,
+        duplicateGroups: known ? groups.filter(item => item.sources.length > 1).length : null,
+        extraEntries: known ? works.length - groups.length : null,
         conflicts: known ? groups.filter(item => item.conflict).length : null,
         knownServers: known, totalServers: rows.length, limitedServers,
         complete: known === rows.length && rows.length > 0 && limitedServers === 0 && !episodesUnknown,
@@ -325,6 +374,7 @@ export class Service {
     let items = groupWorks(this.collect(rows, 'catalog').filter(item => ['Movie', 'Series'].includes(item.type)))
     const query = (params.get('q') || '').trim().toLocaleLowerCase().slice(0, 200)
     const type = params.get('type')
+    if (params.get('duplicates') === 'true') items = items.filter(item => item.sources.length > 1)
     items = items.filter(item => (!type || item.type === type) && (!query || item.sources.some(source => source.title.toLocaleLowerCase().includes(query))))
     items.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN') || a.key.localeCompare(b.key))
     const pageSize = Math.min(60, Math.max(1, Number.parseInt(params.get('pageSize')) || 24))
@@ -339,6 +389,10 @@ export class Service {
     if (!this.store.server(serverId)) throw new RemoteError('连接不存在', 404)
     for (const kind of ['catalog', 'latest', 'resume']) {
       const item = this.store.cache(serverId, kind)?.data?.find(item => item.id === itemId)
+      if (item) return item
+    }
+    for (const cache of this.store.db.prepare("SELECT data FROM cache WHERE serverId=? AND kind LIKE 'episodes:%'").all(serverId)) {
+      const item = JSON.parse(cache.data)?.find(child => child.id === itemId)
       if (item) return item
     }
     throw new RemoteError('条目不存在或当前账号无法访问', 404)
@@ -357,7 +411,10 @@ export class Service {
     const total = episodes.length
     const pages = Math.max(1, Math.ceil(total / 50))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
-    return { ...item, serverName: this.store.server(serverId).name, nsfw: !!this.store.server(serverId).nsfw, seasons,
+    const group = groupWorks(this.collect(this.store.servers(), 'catalog').filter(child => ['Movie', 'Series'].includes(child.type))).find(group => group.sources.some(source => source.serverId === serverId && source.id === itemId))
+    const resource = this.store.cache(serverId, `resources:${itemId}`)
+    return { ...item, resources: { locations: resource?.data?.locations || [], hiddenRemote: resource?.data?.hiddenRemote || false, error: resource?.error || null, updatedAt: resource?.updatedAt || null, stale: !!resource?.data && (!!resource.error || Date.now() - Date.parse(resource.updatedAt) > 86400000) },
+      duplicateSources: group?.sources || [item], duplicateConflict: group?.conflict || false, serverName: this.store.server(serverId).name, nsfw: !!this.store.server(serverId).nsfw, seasons,
       episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: compatible ? (episodeCache?.data ? total : null) : catalog?.data && !this.catalogWarning(catalog) ? total : null,
       episodeError: episodeCache?.error || null, episodeUpdatedAt: (compatible ? episodeCache?.updatedAt : catalog?.updatedAt) || null,
       seasonEpisodeTotal: seasonCache?.data ? seasonCache.data.filter(season => !params.has('season') || season.episode === Number(params.get('season'))).reduce((sum, season) => sum + season.episodeCount, 0) : null,
@@ -389,11 +446,15 @@ export class Service {
   tick() {
     for (const row of this.store.servers()) {
       if (['online', 'partial'].includes(row.status)) this.startSeasonSync(row)
-      if (!row.attemptedAt || Date.now() - Date.parse(row.attemptedAt) >= this.cacheMinutes * 60000) this.refresh(row.id)
+      const catalog = this.store.cache(row.id, 'catalog')
+      const fullAttempt = this.store.cache(row.id, 'fullAttempt')?.data?.at || 0
+      const fullDue = (!catalog?.data || row.fullHours > 0 && Date.now() - Date.parse(catalog.updatedAt) >= row.fullHours * 3600000) && Date.now() - fullAttempt >= row.lightMinutes * 60000
+      if (fullDue) this.refresh(row.id, { full: true })
+      else if (!row.attemptedAt || Date.now() - Date.parse(row.attemptedAt) >= row.lightMinutes * 60000) this.refresh(row.id, { full: false })
     }
   }
   async drain() {
-    await Promise.allSettled([...this.jobs.values(), ...this.images.values(), ...this.detailJobs.values()])
+    await Promise.allSettled([...this.jobs.values(), ...this.images.values(), ...this.detailJobs.values(), ...this.resourceJobs.values()])
     await Promise.allSettled([...this.seasonJobs.values()])
   }
 }

@@ -231,7 +231,7 @@ test('兼容季集计数缺失或403不补零，恢复后续查，单集接口�
   assert.equal(f.app.service.overview(id).stats.movies, 32)
   assert.equal(f.app.service.overview(id).servers[0].episodeSync.failed, 1)
   f.a.state.missingCounts = false
-  f.app.store.db.prepare("DELETE FROM cache WHERE kind LIKE 'seasonAttempt:%'").run()
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind LIKE 'seasonAttempt:%' OR kind='seasonBatch'").run()
   await f.app.service.refresh(id)
   await f.app.service.drain()
   assert.equal(f.app.service.overview(id).stats.episodes, 58)
@@ -245,6 +245,7 @@ test('兼容季集计数缺失或403不补零，恢复后续查，单集接口�
   assert.equal(detail.seasonEpisodeTotal, 55)
   assert.ok(detail.episodeError)
   assert.equal(f.app.service.overview(id).stats.episodes, 58)
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='seasonBatch'").run()
   f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind LIKE 'seasons:%'").run()
   f.a.state.denied.add('/Shows/series/Seasons')
   await f.app.service.refresh(id)
@@ -259,6 +260,7 @@ test('兼容后台遇到认证失效清空权限缓存，旧版本任务不能�
   const id = await f.connect(f.a, '兼容服务器')
   await f.app.service.drain()
   const oldRow = f.app.store.server(id)
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='seasonBatch'").run()
   f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind LIKE 'seasons:%'").run()
   f.a.state.denied.add('all')
   f.app.service.startSeasonSync(oldRow)
@@ -288,6 +290,7 @@ test('兼容后台断网触发冷却，重启读取已完成季缓存不重复�
   resumed.startSeasonSync(f.app.store.server(id))
   await resumed.drain()
   assert.equal(f.a.calls.length, before)
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='seasonBatch'").run()
   f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind LIKE 'seasons:%'").run()
   f.a.state.offline = true
   resumed.startSeasonSync(f.app.store.server(id))
@@ -300,4 +303,129 @@ test('兼容后台断网触发冷却，重启读取已完成季缓存不重复�
   const summary = resumed.overview(id).servers[0].episodeSync
   assert.equal(summary.total, 58)
   assert.equal(summary.stale, true)
+})
+
+test('重复作品入口与额外条目数对应，详情按需读取各服位置并缓存，拒绝原始远程凭据', async t => {
+  const f = await fixture(t)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const aId = await f.connect(f.a, '影院 A')
+  const bId = await f.connect(f.b, '影院 B')
+  await f.app.service.drain()
+  const stats = f.app.service.overview().stats
+  assert.equal(stats.extraEntries, stats.entries - stats.uniqueWorks)
+  const groups = (await f.request('/api/library?duplicates=true&pageSize=60')).data
+  assert.equal(groups.total, stats.duplicateGroups)
+  assert.ok(groups.items.every(group => group.sources.length > 1 && !group.conflict))
+  const nextPage = (await f.request('/api/library?duplicates=true&page=2')).data
+  assert.equal(nextPage.page, 2)
+  assert.equal(nextPage.items.length, 6)
+  assert.equal((await f.request(`/api/library?server=${aId}&duplicates=true`)).data.total, 0)
+  const before = f.a.calls.length
+  const detail = (await f.request(`/api/items/${aId}/1`)).data
+  assert.equal(detail.duplicateSources.length, 2)
+  assert.equal(detail.resources.locations[0].path, '/media/A/1/video.mkv')
+  assert.equal(detail.resources.hiddenRemote, true)
+  assert.equal(f.a.calls.length, before + 1)
+  const cached = await f.request(`/api/items/${aId}/1/resources`)
+  assert.equal(f.a.calls.length, before + 1)
+  assert.equal(cached.data.locations.length, 1)
+  assert.equal((await f.request(`/api/items/${bId}/1/resources`)).data.locations[0].path, '/media/B/1/video.mkv')
+  assert.ok(!JSON.stringify(detail).includes('token=secret'))
+  assert.ok(!JSON.stringify(detail).includes('user:password'))
+  assert.equal((await f.request(`/api/items/${aId}/unknown/resources`)).status, 404)
+  f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind='resources:1'").run()
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='resourceAttempt:1'").run()
+  f.a.state.denied.add('/Users/same-user-id/Items/1')
+  const denied = (await f.request(`/api/items/${aId}/1/resources`)).data
+  assert.deepEqual(denied.locations, [])
+  assert.match(denied.error, /无权/)
+  f.a.state.denied.clear()
+  f.app.store.saveCache(aId, 'resources:1', { locations: [{ path: '/old/video.mkv' }] })
+  f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind='resources:1'").run()
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='resourceAttempt:1'").run()
+  f.a.catalog.splice(f.a.catalog.findIndex(item => item.Id === '1'), 1)
+  const removed = (await f.request(`/api/items/${aId}/1/resources`)).data
+  assert.deepEqual(removed.locations, [])
+  assert.ok(removed.error)
+})
+
+test('同一服务器不同条目按作品归组，重复数与路径分别展示', async t => {
+  const f = await fixture(t)
+  f.a.catalog.push({ ...f.a.catalog.find(item => item.Id === '1'), Id: 'another-version' })
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const id = await f.connect(f.a, '影院 A')
+  await f.app.service.drain()
+  const stats = f.app.service.overview(id).stats
+  assert.equal(stats.duplicateGroups, 1)
+  assert.equal(stats.extraEntries, 1)
+  const groups = (await f.request(`/api/library?server=${id}&duplicates=true`)).data
+  assert.equal(groups.total, 1)
+  assert.equal(groups.items[0].sources.length, 2)
+  const detail = (await f.request(`/api/items/${id}/1`)).data
+  assert.equal(detail.duplicateSources.length, 2)
+  const alternate = (await f.request(`/api/items/${id}/another-version/resources`)).data
+  assert.notEqual(detail.resources.locations[0].path, alternate.locations[0].path)
+})
+
+test('小时轻量任务不扫库，周期设置不发远端请求，每日和手动完整校准才读取片库', async t => {
+  const f = await fixture(t)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const id = await f.connect(f.a, '影院 A')
+  await f.app.service.drain()
+  let before = f.a.calls.length
+  f.app.store.db.prepare("UPDATE servers SET status='offline',error='模拟离线' WHERE id=?").run(id)
+  const update = await f.request(`/api/servers/${id}`, 'PUT', { name: '新名称', url: f.a.url, nsfw: true, lightMinutes: 60, fullHours: 24 })
+  await f.app.service.drain()
+  assert.equal(update.data.lightMinutes, 60)
+  assert.equal(update.data.error, '模拟离线')
+  assert.equal(f.a.calls.length, before)
+  const old = f.app.store.cache(id, 'catalog').updatedAt
+  f.app.store.db.prepare("UPDATE servers SET attemptedAt='2000-01-01T00:00:00Z'").run()
+  f.app.service.tick()
+  await f.app.service.drain()
+  assert.equal(f.app.store.cache(id, 'catalog').updatedAt, old)
+  assert.equal(f.a.calls.length - before, 3)
+  assert.ok(f.a.calls.slice(before).every(call => !call.path.endsWith('/Items')))
+  before = f.a.calls.length
+  await f.request('/api/refresh', 'POST', { server: id })
+  await f.app.service.drain()
+  assert.equal(f.a.calls.length - before, 3)
+  f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind='catalog'").run()
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='fullAttempt'").run()
+  before = f.a.calls.length
+  f.app.service.tick()
+  await f.app.service.drain()
+  assert.ok(f.a.calls.slice(before).some(call => call.path.endsWith('/Items')))
+  await f.request(`/api/servers/${id}`, 'PUT', { name: '影院 A', url: f.a.url, fullHours: 0 })
+  f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind='catalog'").run()
+  before = f.a.calls.length
+  f.app.service.tick()
+  await f.app.service.drain()
+  assert.equal(f.a.calls.length, before)
+  await f.request('/api/refresh', 'POST', { server: id, mode: 'full' })
+  await f.app.service.drain()
+  assert.ok(f.a.calls.length > before)
+  assert.equal((await f.request(`/api/servers/${id}`, 'PUT', { name: '影院 A', url: f.a.url, lightMinutes: 1 })).status, 400)
+})
+
+test('季集每批最多20部，五分钟内不重复启动，缓存可继续下一批', async t => {
+  const f = await fixture(t, { limitedCatalog: true })
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const id = await f.connect(f.a, '兼容服务器')
+  await f.app.service.drain()
+  const catalog = Array.from({ length: 45 }, (_, n) => ({ id: `series-${n}`, type: 'Series' }))
+  f.app.store.saveCache(id, 'catalog', catalog)
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='seasonBatch'").run()
+  let calls = 0
+  f.app.service.client.seasons = async () => { calls++; return [] }
+  f.app.service.startSeasonSync(f.app.store.server(id))
+  await f.app.service.drain()
+  assert.equal(calls, 20)
+  f.app.service.startSeasonSync(f.app.store.server(id))
+  await f.app.service.drain()
+  assert.equal(calls, 20)
+  f.app.store.saveCache(id, 'seasonBatch', { at: Date.now() - 300001 })
+  f.app.service.startSeasonSync(f.app.store.server(id))
+  await f.app.service.drain()
+  assert.equal(calls, 40)
 })

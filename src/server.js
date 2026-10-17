@@ -125,15 +125,16 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
       }
       if (path === '/api/refresh' && method === 'POST') {
         const body = await readBody(request)
-        for (const row of service.selected(body.server)) service.refresh(row.id)
+        for (const row of service.selected(body.server)) service.refresh(row.id, { full: body.mode === 'full' })
         return send(response, 202, { ok: true })
       }
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))
       if (path === '/api/library' && method === 'GET') return send(response, 200, service.library(url.searchParams))
-      const item = path.match(/^\/api\/items\/([a-f0-9-]+)\/([^/]+)(\/poster)?$/)
+      const item = path.match(/^\/api\/items\/([a-f0-9-]+)\/([^/]+)(\/(?:poster|resources))?$/)
       if (item && method === 'GET') {
         let itemId
         try { itemId = decodeURIComponent(item[2]) } catch { throw new RemoteError('条目标识无效', 400) }
+        if (item[3] === '/resources') return send(response, 200, await service.readResources(item[1], itemId))
         if (item[3]) {
           const image = await service.poster(item[1], itemId)
           response.writeHead(200, { 'Content-Type': image.mime })

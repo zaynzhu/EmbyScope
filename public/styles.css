@@ -145,3 +145,10 @@ dialog::backdrop { background: #152d4666; backdrop-filter: blur(3px) }
 .form-grid .checkbox-label input { width: auto; min-height: auto }
 .nsfw-tag { font-size: 11px; font-weight: 500; color: #946334; background: #fbf0e3; padding: 3px 6px; border-radius: 4px }
 .server-switch { flex-wrap: wrap }
+
+.resource-section { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 20px }
+.resource-path code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; background: #f3f6f8; border-radius: 6px; user-select: all }
+.duplicate-source { padding: 14px 0; border-bottom: 1px solid var(--line) }
+.duplicate-source > small { display: block; overflow-wrap: anywhere; margin: 6px 0 }
+.duplicate-source button, .episode button { font-size: 11px; margin: 6px 5px 0 0 }
+.duplicate-count { font-size: 11px; margin-top: 8px; padding: 5px; min-height: 0 }

@@ -71,6 +71,11 @@ export async function mockEmby(label, { count = 29, requireCompatAuth = false, l
       const start = Number(url.searchParams.get('StartIndex'))
       return json(200, { Items: episodes.slice(start, start + 23), TotalRecordCount: episodes.length })
     }
+    if (path.startsWith('/Users/same-user-id/Items/')) {
+      const id = decodeURIComponent(path.split('/').at(-1))
+      const item = [...catalog, ...episodes].find(item => item.Id === id)
+      if (item) return json(200, { ...item, Path: `/media/${label}/${id}/video.mkv`, MediaSources: [{ Path: `/media/${label}/${id}/video.mkv` }, { Path: 'https://user:password@example.test/stream?token=secret' }] })
+    }
     if (path.endsWith('/Views')) return json(200, { Items: [{ Id: 'view', Name: `${label} 的电影与电视剧`, CollectionType: 'mixed' }] })
     if (path.endsWith('/Latest')) return json(200, movies.slice(0, 6))
     if (path.endsWith('/Resume')) return json(200, { Items: [{ ...movies[0], RunTimeTicks: 100000000, UserData: { PlaybackPositionTicks: 40000000, LastPlayedDate: '2026-10-16T12:00:00Z' } }] })

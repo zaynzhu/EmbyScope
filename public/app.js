@@ -1,6 +1,6 @@
 const app = document.querySelector('#app')
 const dialog = document.querySelector('#dialog')
-const state = { page: 'overview', server: 'all', servers: [], query: '', type: '', libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
+const state = { page: 'overview', server: 'all', servers: [], query: '', type: '', duplicates: false, libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
 const titles = { overview: '概览', library: '片库', settings: '服务器设置' }
 const statuses = { online: '在线', offline: '离线', partial: '部分可用', denied: '认证 / 权限异常', pending: '等待同步', error: '同步异常' }
 const datasetNames = { catalog: '片库', views: '媒体库', latest: '最近入库', resume: '继续观看' }
@@ -63,8 +63,9 @@ function statusCards(servers) {
   return `<div class="status-list">${servers.map(server => `<div class="server-status"><div class="status-title"><strong>${e(server.name)}</strong>${statusLabel(server)}</div>
     <small>片库缓存 ${date(server.datasets.catalog.updatedAt)}${server.datasets.catalog.stale ? ' · 旧数据' : ''}</small>
     ${server.error ? `<small>${e(server.error)}</small>` : '<small>统计范围：当前 Emby 账号可见条目</small>'}
+    <small>轻量更新 ${server.lightMinutes} 分钟 · 完整片库 ${server.fullHours ? `${server.fullHours} 小时` : '仅手动'}</small>
     ${server.catalogProgress ? `<small>目录读取：${server.catalogProgress.directories} / ${server.catalogProgress.discovered} 个已发现目录 · 已找到 ${count(server.catalogProgress.items)} 条媒体</small>` : ''}
-    ${server.episodeSync ? `<small>单集核对：${server.episodeSync.completed} / ${server.episodeSync.series} 部剧 · ${server.episodeSync.syncing ? '后台补全中' : server.episodeSync.total === null ? '待补全' : '已核对'} · 已核对 ${count(server.episodeSync.knownEpisodes)} 集${server.episodeSync.failed ? ` · ${server.episodeSync.failed} 部读取异常` : ''}</small><small>按季接口集数汇总 · 最旧核对 ${date(server.episodeSync.updatedAt)}${server.episodeSync.stale ? ' · 旧数据' : ''} · 缓存 ${server.episodeSync.cacheHours} 小时</small>` : ''}</div>`).join('')}</div>`
+    ${server.episodeSync ? `<small>单集核对：${server.episodeSync.completed} / ${server.episodeSync.series} 部剧 · ${server.episodeSync.syncing ? '后台补全中' : server.episodeSync.total === null ? '待补全' : '已核对'} · 已核对 ${count(server.episodeSync.knownEpisodes)} 集${server.episodeSync.failed ? ` · ${server.episodeSync.failed} 部读取异常` : ''}</small><small>按季接口集数汇总 · 最旧核对 ${date(server.episodeSync.updatedAt)}${server.episodeSync.stale ? ' · 旧数据' : ''} · 每 ${server.episodeSync.batchMinutes} 分钟最多 ${server.episodeSync.batchSize} 部 · 缓存 ${server.episodeSync.cacheHours} 小时</small>` : ''}</div>`).join('')}</div>`
 }
 
 function datasetNotice(servers, kind) {
@@ -110,6 +111,7 @@ function mediaCards(items, resume = false) {
       <button class="card-title" data-item="${e(item.id)}" data-server="${e(item.serverId)}" title="${e(item.title)}">${e(item.title)}</button>
       <div class="card-meta"><span>${item.year ?? '年份未知'} · ${{ Movie: '电影', Series: '电视剧', Episode: '单集', Season: '季' }[item.type] || '媒体'}</span><span class="rating">${item.rating != null ? `★ ${item.rating.toFixed(1)}` : ''}</span></div>
       <div class="sources">${sources.map(source => `<button class="source" data-item="${e(source.id)}" data-server="${e(source.serverId)}" title="查看此服务器条目">${e(source.serverName || state.servers.find(server => server.id === source.serverId)?.name || '服务器')}${source.nsfw || state.servers.find(server => server.id === source.serverId)?.nsfw ? ' · NSFW' : ''}</button>`).join('')}</div>
+      ${sources.length > 1 ? `<button class="duplicate-count" data-item="${e(item.id)}" data-server="${e(item.serverId)}">${sources.length} 条记录 · 额外 ${sources.length - 1} 条 · 查看位置</button>` : ''}
       ${item.conflict ? '<div class="conflict">编号冲突 · 独立保留</div>' : ''}
       ${progress !== null ? `<progress value="${progress}" max="100" aria-label="当前账号观看进度"></progress><small>已观看 ${Math.round(progress)}%</small>` : ''}</article>`
   }).join('')}</div>`
@@ -127,10 +129,11 @@ function overview(data) {
   const stats = data.stats
   const title = state.server === 'all' ? '媒体概览' : `${e(data.servers[0]?.name)} · 概览`
   if (!state.servers.length) return heading('媒体概览', '你的媒体收藏，在这里汇合。') + emptyConnections()
-  return heading(title, '你的媒体收藏，在这里汇合。', '<button data-action="refresh">↻ 刷新数据</button><button class="primary" data-nav="library">浏览片库</button>') +
+  return heading(title, '你的媒体收藏，在这里汇合。', '<button data-action="refresh">↻ 更新概览</button><button data-action="full-refresh">完整校准片库</button><button class="primary" data-nav="library">浏览片库</button>') +
     statusCards(data.servers) +
     `<div class="stats">${[['媒体库', stats.libraries, '当前账号可见'], ['电影', stats.movies, '各服条目合计'], ['电视剧', stats.series, '各服条目合计'], ['单集', stats.episodes, '各服条目合计'], ['作品条目', stats.entries, '电影 + 电视剧'], ['去重作品', stats.uniqueWorks, '按有效编号匹配']].map(([name, value, hint], index) => `<div class="stat ${index === 5 ? 'accent' : ''}"><small>${name}</small><strong>${count(value)}</strong><span>${hint}</span></div>`).join('')}</div>
-    <p class="notice">${stats.complete ? '统计覆盖全部所选服务器的可用缓存。' : `当前 ${stats.knownServers} / ${stats.totalServers} 台服务器具有片库缓存，数值为已知部分合计。`}${data.servers.some(server => server.episodeSync?.total === null) ? ' 单集总数正在按季接口补全，尚未核对完时显示不可用。' : ''}${stats.limitedServers ? ` ${stats.limitedServers} 台服务器未遵循筛选条件，无法确认完整片库及单集总数。` : ''} 每 ${data.cacheMinutes} 分钟自动同步。${stats.conflicts ? ` 有 ${stats.conflicts} 个编号冲突条目独立保留。` : ''} 编号缺失时不按同名合并；去重作品数包含无法确认是否重复的独立条目。</p>
+    <p class="notice">${stats.complete ? '统计覆盖全部所选服务器的可用缓存。' : `当前 ${stats.knownServers} / ${stats.totalServers} 台服务器具有片库缓存，数值为已知部分合计。`}${data.servers.some(server => server.episodeSync?.total === null) ? ' 单集总数正在按季接口补全，尚未核对完时显示不可用。' : ''}${stats.limitedServers ? ` ${stats.limitedServers} 台服务器未遵循筛选条件，无法确认完整片库及单集总数。` : ''} 轻量数据与片库分开更新，周期见服务器状态。${stats.conflicts ? ` 有 ${stats.conflicts} 个编号冲突条目独立保留。` : ''} 编号缺失时不按同名合并；去重作品数包含无法确认是否重复的独立条目。</p>
+    <p class="notice">发现 ${count(stats.duplicateGroups)} 组重复作品，额外 ${count(stats.extraEntries)} 条记录。<button data-action="duplicates">查看重复条目</button> 同作品不同版本或不同服务器也会归组，不代表文件可删除。</p>
     <section class="panel"><div class="section-title"><h2>我的媒体库</h2><small>当前账号的顶层媒体库</small></div>${datasetNotice(data.servers, 'views')}
     ${data.views.length ? `<div class="libraries">${data.views.map(view => `<div class="library-tile"><span class="library-symbol" aria-hidden="true">${view.type === 'tvshows' ? '▤' : '▥'}</span><div><strong>${e(view.name)}</strong><small>${e(view.serverName)}</small></div></div>`).join('')}</div>` : '<div class="empty">暂无可用媒体库</div>'}</section>
     <section class="panel"><div class="section-title"><h2>最近入库</h2><small>按各服入库时间合并 · 最多 24 条</small></div>${datasetNotice(data.servers, 'latest')}${mediaCards(data.latest)}</section>
@@ -139,9 +142,10 @@ function overview(data) {
 }
 
 function library(data) {
-  return heading('我的片库', '跨服务器浏览电影与电视剧，每个来源都清晰可查。', '<button data-action="refresh">↻ 刷新数据</button>') +
+  return heading('我的片库', '跨服务器浏览电影与电视剧，每个来源都清晰可查。', '<button data-action="refresh">↻ 更新概览</button><button data-action="full-refresh">完整校准片库</button>') +
     `<form class="filters" id="search-form"><label>搜索作品<input id="search" name="q" type="search" placeholder="输入电影或电视剧名称" value="${e(state.query)}" maxlength="200"></label>
     <label>服务器<select id="library-server-select" aria-label="片库服务器"><option value="all">全部服务器 · 汇总</option>${state.servers.map(server => `<option value="${e(server.id)}" ${state.server === server.id ? 'selected' : ''}>${e(server.name)}${server.nsfw ? ' · NSFW' : ''}</option>`).join('')}</select></label>
+    <label>条目范围<select id="duplicate-select"><option value="all">全部作品</option><option value="duplicates" ${state.duplicates ? 'selected' : ''}>仅重复作品</option></select></label>
     <label>媒体类型<select id="type-select"><option value="">全部类型</option><option value="Movie" ${state.type === 'Movie' ? 'selected' : ''}>电影</option><option value="Series" ${state.type === 'Series' ? 'selected' : ''}>电视剧</option></select></label><button type="submit">搜索</button></form>
     ${statusCards(data.servers)}${datasetNotice(data.servers, 'catalog')}
     <section class="panel"><div class="section-title"><h2>${data.total === null ? '作品数量不可用' : `${count(data.total)} 部作品`}</h2><small>有效编号去重 · 已知 ${data.knownServers} / ${data.servers.length} 台 · 每页 ${data.pageSize} 部</small></div>
@@ -166,7 +170,7 @@ async function loadView({ preserveSearch = false } = {}) {
     state.servers = servers
     updateServers()
     const page = state.page
-    const params = new URLSearchParams({ server: state.server, q: state.query, type: state.type, page: state.libraryPage })
+    const params = new URLSearchParams({ server: state.server, q: state.query, type: state.type, page: state.libraryPage, duplicates: state.duplicates })
     const data = page === 'settings' ? null : await api(`/api/${page === 'overview' ? 'overview' : 'library'}?${params}`)
     if (request !== state.request || !state.authenticated) return
     const focused = preserveSearch && document.activeElement?.id === 'search'
@@ -199,8 +203,15 @@ function editServer(id) {
     <label>服务器地址<input name="url" type="url" value="${e(server?.url || '')}" placeholder="https://emby.example.com" required><small>支持端口和反向代理路径；不含用户名、密码或查询参数。</small></label>
     <label>Emby 用户名<input name="username" autocomplete="off" maxlength="256" ${server ? 'placeholder="留空保留原账号"' : 'required'}></label>
     <label>Emby 密码<input name="password" type="password" autocomplete="new-password" maxlength="1024" ${server ? 'placeholder="留空保留原密码"' : ''}><small>${server ? '凭据不回传浏览器。更换账号时请同时填写新密码。' : '支持 Emby 无密码账号；使用 HTTP 时凭据在到 Emby 的网络链路上不加密。'}</small></label>
+    <label>轻量更新间隔（分钟）<input name="lightMinutes" type="number" min="15" max="1440" value="${server?.lightMinutes || 60}" required><small>只更新媒体库视图、最近入库和继续观看，不重读片库。</small></label>
+    <label>完整片库校准<select name="fullHours">${[[0, '仅手动'], [12, '每 12 小时'], [24, '每天一次（默认）'], [48, '每两天'], [168, '每周']].map(([value, label]) => `<option value="${value}" ${(server?.fullHours ?? 24) === value ? 'selected' : ''}>${label}</option>`).join('')}</select><small>校准新增、删除和元数据变化。季集每 5 分钟最多核对 20 部，新鲜缓存保留至少 7 天。</small></label>
     <label class="checkbox-label"><input name="nsfw" type="checkbox" ${server?.nsfw ? 'checked' : ''}>标记为 NSFW，默认虚化此服务器海报</label><small>仅影响本地显示；可一键显示或点击单张海报解除虚化。刷新页面后恢复虚化。</small>
-    <p class="form-error" id="server-error" role="alert"></p><div class="dialog-footer"><button type="button" data-action="close">取消</button><button class="primary" type="submit">保存并同步</button></div></form>`)
+    <p class="form-error" id="server-error" role="alert"></p><div class="dialog-footer"><button type="button" data-action="close">取消</button><button class="primary" type="submit">保存设置</button></div></form>`)
+}
+
+function renderResources(resource) {
+  return `${resource.locations.length ? resource.locations.map(location => `<div class="resource-path"><small>${e(location.label)}</small><code>${e(location.path)}</code></div>`).join('') : '<p>当前账号或接口未提供可展示的本地路径。</p>'}
+    ${resource.hiddenRemote ? '<p class="notice">远程地址或可能携带凭据的路径已隐藏。</p>' : ''}${resource.error ? `<p class="notice">${e(resource.error)}</p>` : ''}<small>读取时间：${date(resource.updatedAt)}${resource.stale ? ' · 旧缓存' : ''}</small>`
 }
 
 async function showDetail(serverId, id, params = new URLSearchParams()) {
@@ -214,10 +225,13 @@ async function showDetail(serverId, id, params = new URLSearchParams()) {
       <div class="metadata">${item.genres.map(genre => `<span>${e(genre)}</span>`).join('')}</div><small>${item.seriesName ? `${e(item.seriesName)} · ` : ''}${item.season != null ? `第 ${item.season} 季 ` : ''}${item.episode != null ? `第 ${item.episode} ${item.type === 'Season' ? '季' : '集'}` : ''}</small></div></div>
       <p class="detail-overview">${e(item.overview || '当前接口未提供简介。')}</p>
       <div class="detail-source"><strong>资源来源：${e(item.serverName)}</strong><br>仅对应此服务器的条目，其他来源请点击片库卡片上的来源标签。<br>缓存时间：${date(item.cache.updatedAt)}${item.cache.stale ? ' · 旧缓存' : ''}${item.cache.warning ? `<br>${e(item.cache.warning)}` : ''}</div>
+      <section class="resource-section"><h2>实际资源位置</h2>${renderResources(item.resources)}<p class="muted">这是此服务器报告的文件或目录位置，可能是容器挂载路径、STRM 文件或虚拟路径，不保证等于 NAS 物理路径。</p></section>
+      <section class="resource-section"><h2>同作品条目 · ${item.duplicateSources.length} 条${item.duplicateSources.length > 1 ? `（额外 ${item.duplicateSources.length - 1} 条）` : ''}</h2><p class="muted">按媒体类型与有效外部编号匹配；${item.duplicateConflict ? '编号冲突，当前条目独立保留。' : '不同清晰度、剪辑版与跨服收藏可能有意保留，请自行核对。'} 此处对照全部已连接服务器的缓存。</p>
+      ${item.duplicateSources.map(source => `<div class="duplicate-source"><strong>${e(source.serverName || item.serverName)} · ${e(source.title)}</strong><small>条目标识：${e(source.id)}</small><div id="resource-${e(source.serverId)}-${e(source.id)}">${source.serverId === serverId && source.id === id ? renderResources(item.resources) : '<span class="muted">尚未读取位置</span>'}</div><button data-resource="${e(source.id)}" data-server="${e(source.serverId)}">读取位置</button><button data-item="${e(source.id)}" data-server="${e(source.serverId)}">此条目详情</button></div>`).join('')}</section>
       <div class="metadata">${Object.entries(item.providerIds).map(([key, value]) => `<span>${e(key.toUpperCase())} ${e(value)}</span>`).join('') || '<small>未提供有效外部编号，独立保留。</small>'}</div>
       ${['Series', 'Episode', 'Season'].includes(item.type) ? `<section><div class="section-title"><h2>季集信息</h2><select id="season-select" data-server="${e(serverId)}" data-id="${e(id)}" aria-label="选择季"><option value="">全部季</option>${item.seasons.map(season => `<option value="${season}" ${params.get('season') === String(season) ? 'selected' : ''}>第 ${season} 季</option>`).join('')}</select></div>
         ${item.seasonEpisodeTotal !== null ? `<p class="notice">季接口返回共 ${count(item.seasonEpisodeTotal)} 集；下方列表按单集接口实际读取结果展示。</p>` : ''}<p class="notice">单集明细缓存：${date(item.episodeUpdatedAt)}</p>${item.episodeError ? `<p class="notice">单集明细：${e(item.episodeError)}。暂不能展示完整列表。</p>` : ''}
-        ${item.episodes.length ? item.episodes.map(episode => `<div class="episode"><span>${e(episode.title)}</span><small>${episode.season == null ? '未知季' : `S${episode.season}`} · ${episode.episode == null ? '未知集' : `E${episode.episode}`}</small></div>`).join('') : '<div class="empty">当前账号暂无可展示的季集信息</div>'}
+        ${item.episodes.length ? item.episodes.map(episode => `<div class="episode"><span>${e(episode.title)}<button data-resource="${e(episode.id)}" data-server="${e(serverId)}">资源位置</button><span id="resource-${e(serverId)}-${e(episode.id)}"></span></span><small>${episode.season == null ? '未知季' : `S${episode.season}`} · ${episode.episode == null ? '未知集' : `E${episode.episode}`}</small></div>`).join('') : '<div class="empty">当前账号暂无可展示的季集信息</div>'}
         <div class="pagination"><button data-episode-page="${item.episodePage - 1}" data-server="${e(serverId)}" data-id="${e(id)}" ${item.episodePage === 1 ? 'disabled' : ''}>上一页</button><span>${item.episodePage} / ${item.episodePages} 页</span><button data-episode-page="${item.episodePage + 1}" data-server="${e(serverId)}" data-id="${e(id)}" ${item.episodePage === item.episodePages ? 'disabled' : ''}>下一页</button></div></section>` : ''}`)
   } catch (error) { if (dialog.open) openDialog('详情不可用', `<div class="empty">${e(error.message)}</div>`) }
 }
@@ -227,7 +241,24 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button')
   if (!button) return
   try {
-    if (button.dataset.action === 'toggle-blur') {
+    if (button.dataset.resource) {
+      button.disabled = true
+      const identity = state.detail
+      try {
+        const resource = await api(`${itemPath({ serverId: button.dataset.server, id: button.dataset.resource })}/resources`)
+        if (identity === state.detail && dialog.open) {
+          const target = document.getElementById(`resource-${button.dataset.server}-${button.dataset.resource}`)
+          if (target) target.innerHTML = renderResources(resource)
+        }
+      } finally { button.disabled = false }
+    } else if (button.dataset.action === 'duplicates') {
+      state.duplicates = true
+      state.query = ''
+      state.type = ''
+      state.page = 'library'
+      state.libraryPage = 1
+      await loadView()
+    } else if (button.dataset.action === 'toggle-blur') {
       state.blurNsfw = !state.blurNsfw
       state.revealed.clear()
       updatePosters()
@@ -257,9 +288,9 @@ document.addEventListener('click', async event => {
       const season = document.querySelector('#season-select').value
       if (season !== '') params.set('season', season)
       await showDetail(button.dataset.server, button.dataset.id, params)
-    } else if (button.dataset.action === 'refresh' || button.dataset.refresh) {
-      await api('/api/refresh', 'POST', { server: button.dataset.refresh || state.server })
-      toast('已开始同步，可继续浏览缓存')
+    } else if (['refresh', 'full-refresh'].includes(button.dataset.action) || button.dataset.refresh) {
+      await api('/api/refresh', 'POST', { server: button.dataset.refresh || state.server, mode: button.dataset.action === 'full-refresh' ? 'full' : 'light' })
+      toast(button.dataset.action === 'full-refresh' ? '已开始完整校准片库，按限速读取' : '已开始轻量更新，片库不会重扫')
       await loadView()
     } else if (button.dataset.action === 'add') editServer()
     else if (button.dataset.action === 'close') dialog.close()
@@ -277,6 +308,10 @@ document.addEventListener('click', async event => {
 document.addEventListener('change', async event => {
   if (['server-select', 'library-server-select'].includes(event.target.id)) {
     state.server = event.target.value
+    state.libraryPage = 1
+    await loadView()
+  } else if (event.target.id === 'duplicate-select') {
+    state.duplicates = event.target.value === 'duplicates'
     state.libraryPage = 1
     await loadView()
   } else if (event.target.id === 'type-select') {
@@ -318,12 +353,14 @@ document.addEventListener('submit', async event => {
       await boot()
     } else if (form.id === 'server-form') {
       const data = Object.fromEntries(new FormData(form))
+      data.lightMinutes = Number(form.elements.lightMinutes.value)
+      data.fullHours = Number(form.elements.fullHours.value)
       data.nsfw = form.elements.nsfw.checked
       const id = form.dataset.id
       await api(`/api/servers${id ? `/${id}` : ''}`, id ? 'PUT' : 'POST', data)
       form.reset()
       dialog.close()
-      toast('连接已保存，正在同步')
+      toast('设置已保存；新增或变更账号时自动同步')
       await loadView()
     }
   } catch (error) {
