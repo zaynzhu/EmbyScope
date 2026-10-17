@@ -17,10 +17,18 @@ export class Service {
       const cache = this.store.cache(id, kind)
       datasets[kind] = {
         available: cache?.data != null, updatedAt: cache?.updatedAt || null, error: cache?.error || null,
+        warning: kind === 'catalog' ? this.catalogWarning(cache) : null,
         stale: !!cache?.data && (!!cache.error || Date.now() - Date.parse(cache.updatedAt) > this.cacheMinutes * 60000)
       }
     }
-    return { id, name, url, status, error, attemptedAt, syncing: this.jobs.has(id), datasets }
+    const warning = datasets.catalog.warning
+    return { id, name, url, status: status === 'online' && warning ? 'partial' : status,
+      error: error || warning, attemptedAt, syncing: this.jobs.has(id), datasets }
+  }
+  catalogWarning(cache) {
+    return cache?.data?.some(item => !['Movie', 'Series', 'Season', 'Episode'].includes(item.type))
+      ? '服务端未遵循媒体类型筛选，统计仅含已读取条目，单集总数不可用'
+      : null
   }
   listServers() { return this.store.servers().map(row => this.publicServer(row)) }
   saveServer(body, id) {
@@ -156,14 +164,16 @@ export class Service {
     const known = rows.filter(row => this.store.cache(row.id, 'catalog')?.data != null).length
     const viewsKnown = rows.filter(row => this.store.cache(row.id, 'views')?.data != null).length
     const groups = groupWorks(works)
+    const limitedServers = rows.filter(row => this.catalogWarning(this.store.cache(row.id, 'catalog'))).length
     const count = type => known ? catalog.filter(item => item.type === type).length : null
     return {
       servers: rows.map(row => this.publicServer(row)), cacheMinutes: this.cacheMinutes,
-      stats: { movies: count('Movie'), series: count('Series'), episodes: count('Episode'),
+      stats: { movies: count('Movie'), series: count('Series'), episodes: limitedServers ? null : count('Episode'),
         libraries: viewsKnown ? this.collect(rows, 'views').length : null,
         entries: known ? works.length : null, uniqueWorks: known ? groups.length : null,
         conflicts: known ? groups.filter(item => item.conflict).length : null,
-        knownServers: known, totalServers: rows.length, complete: known === rows.length && rows.length > 0,
+        knownServers: known, totalServers: rows.length, limitedServers,
+        complete: known === rows.length && rows.length > 0 && limitedServers === 0,
         history: null, historyReason: '不可用：未接入可解释的播放历史，当前账号的继续观看不代表全站播放统计。' },
       views: this.collect(rows, 'views'),
       latest: this.collect(rows, 'latest').sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 24),
@@ -205,7 +215,7 @@ export class Service {
     const pages = Math.max(1, Math.ceil(total / 50))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
     return { ...item, serverName: this.store.server(serverId).name, seasons,
-      episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: catalog?.data ? total : null,
+      episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: catalog?.data && !this.catalogWarning(catalog) ? total : null,
       episodePage: page, episodePages: pages, cache: this.publicServer(this.store.server(serverId)).datasets.catalog }
   }
   async poster(serverId, itemId) {

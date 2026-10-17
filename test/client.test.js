@@ -1,6 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { EmbyClient, RateLimiter, normalizeUrl } from '../src/emby.js'
+import { mockEmby } from './fixtures.js'
+
+test('极影视兼容层要求 X-Emby-Authorization，登录和后续读取均携带设备身份', async t => {
+  const mock = await mockEmby('compat', { requireCompatAuth: true })
+  t.after(() => mock.close())
+  const server = { id: 'compat-device', url: mock.url }
+  const client = new EmbyClient({ interval: 1, retries: 0 })
+  const secret = await client.login(server, { username: 'fixture-user', password: 'fixture-pass' })
+  assert.equal(secret.userId, 'same-user-id')
+  const items = await client.catalog(server, secret)
+  assert.equal(items.length, mock.catalog.length)
+  const views = await client.request(server, `/Users/${secret.userId}/Views`, { token: secret.token })
+  assert.equal(views.Items.length, 1)
+  const image = await client.request(server, '/Items/1/Images/Primary', { token: secret.token, image: true })
+  assert.equal(image.mime, 'image/png')
+})
 
 test('默认同服请求间隔至少两秒，不同服务器不被串行阻塞', async () => {
   const limiter = new RateLimiter()

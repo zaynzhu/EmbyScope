@@ -7,7 +7,7 @@ export const sampleMovie = (id, providerIds = {}, extra = {}) => ({
   DateCreated: '2026-10-10T10:00:00Z', ...extra
 })
 
-export async function mockEmby(label, { count = 29 } = {}) {
+export async function mockEmby(label, { count = 29, requireCompatAuth = false, limitedCatalog = false } = {}) {
   const calls = []
   const state = { offline: false, denied: new Set(), badPages: false, slow: false }
   const movies = Array.from({ length: count }, (_, index) => sampleMovie(String(index + 1), { Tmdb: String(1000 + index) }, {
@@ -18,7 +18,7 @@ export async function mockEmby(label, { count = 29 } = {}) {
   movies.push(sampleMovie('missing', {}, { Name: '同名但无编号' }))
   const series = { Id: 'series', Name: '山海之间', Type: 'Series', ProviderIds: { Tvdb: '100' }, Genres: ['纪录片'], ProductionYear: 2026, Overview: '模拟电视剧，用于验证季集展示。' }
   const episodes = Array.from({ length: 55 }, (_, index) => ({ Id: `ep-${index}`, Type: 'Episode', Name: `山海之间 · 第 ${index + 1} 集`, SeriesId: 'series', SeriesName: '山海之间', ParentIndexNumber: index < 30 ? 1 : 2, IndexNumber: index < 30 ? index + 1 : index - 29 }))
-  const catalog = [...movies, series, ...episodes]
+  const catalog = [...movies, series, ...(limitedCatalog ? [{ Id: 'folder', Type: 'Folder', Name: '未按筛选排除的文件夹' }] : episodes)]
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost')
     const path = url.pathname
@@ -29,6 +29,10 @@ export async function mockEmby(label, { count = 29 } = {}) {
     }
     if (state.slow) await new Promise(resolve => setTimeout(resolve, 150))
     if (state.offline) return json(503, { Message: 'offline' })
+    if (requireCompatAuth && !request.headers['x-emby-authorization']?.includes('DeviceId="')) {
+      response.writeHead(400, { 'Content-Type': 'text/plain' })
+      return response.end('DeviceId required in X-Emby-Authorization header')
+    }
     if (path === '/Users/AuthenticateByName' && request.method === 'POST') {
       let text = ''
       for await (const chunk of request) text += chunk

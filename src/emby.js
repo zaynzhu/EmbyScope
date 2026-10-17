@@ -49,8 +49,11 @@ export class EmbyClient {
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       try {
         return await this.limiter.run(url.origin, async () => {
+          const authorization = `Emby Client="EmbyScope", Device="EmbyScope", DeviceId="${server.id}", Version="1.0.0"`
           const headers = {
-            Authorization: `Emby Client="EmbyScope", Device="EmbyScope", DeviceId="${server.id}", Version="1.0.0"`,
+            Authorization: authorization,
+            // 极影视兼容层只从此请求头读取客户端设备身份。
+            'X-Emby-Authorization': authorization,
             Accept: image ? 'image/*' : 'application/json'
           }
           if (token) headers['X-Emby-Token'] = token

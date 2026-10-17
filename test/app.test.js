@@ -7,9 +7,9 @@ import { createApp } from '../src/server.js'
 import { EmbyClient } from '../src/emby.js'
 import { mockEmby } from './fixtures.js'
 
-async function fixture(t) {
+async function fixture(t, aOptions = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'embyscope-test-'))
-  const a = await mockEmby('A')
+  const a = await mockEmby('A', aOptions)
   const b = await mockEmby('B')
   const app = createApp({ dataDir, scheduler: false, client: new EmbyClient({ interval: 1, timeout: 1000, retries: 0 }) })
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve))
@@ -132,6 +132,24 @@ test('单台离线保留有时间标记的缓存，另一台独立更新；权�
   assert.equal(f.app.service.library(new URLSearchParams({ server: bId })).total, null)
   assert.equal(f.app.service.overview().stats.complete, false)
   assert.equal(f.app.service.overview().stats.movies, 31)
+})
+
+test('兼容层忽略媒体筛选时保留可读片库，单服及汇总均不将缺失单集计为零', async t => {
+  const f = await fixture(t, { requireCompatAuth: true, limitedCatalog: true })
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const aId = await f.connect(f.a, '兼容服务器')
+  await f.connect(f.b, '标准服务器')
+  await f.app.service.drain()
+  const single = f.app.service.overview(aId)
+  assert.equal(single.servers[0].status, 'partial')
+  assert.match(single.servers[0].datasets.catalog.warning, /未遵循媒体类型筛选/)
+  assert.equal(single.stats.movies, 31)
+  assert.equal(single.stats.episodes, null)
+  assert.equal(single.stats.complete, false)
+  assert.equal(f.app.service.overview().stats.episodes, null)
+  assert.equal(f.app.service.overview().stats.limitedServers, 1)
+  assert.equal(f.app.service.detail(aId, 'series', new URLSearchParams()).episodeTotal, null)
+  assert.ok(f.app.service.library(new URLSearchParams({ server: aId })).items.length > 0)
 })
 
 test('换账号清空缓存、在途旧任务不能回写、删除连接级联清理', async t => {
