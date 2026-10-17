@@ -1,0 +1,8 @@
+node_modules/
+data/
+.env
+compose.env
+dist/
+*.log
+.DS_Store
+test-output/

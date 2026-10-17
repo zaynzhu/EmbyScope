@@ -1,0 +1,13 @@
+{
+  "name": "embyscope",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.22.2 <23" },
+  "scripts": {
+    "start": "node src/server.js",
+    "demo": "node scripts/demo.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/server.js && node --check src/service.js && node --check src/emby.js && node --check public/app.js"
+  }
+}
