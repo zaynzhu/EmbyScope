@@ -9,7 +9,7 @@ export const sampleMovie = (id, providerIds = {}, extra = {}) => ({
 
 export async function mockEmby(label, { count = 29, requireCompatAuth = false, limitedCatalog = false } = {}) {
   const calls = []
-  const state = { offline: false, denied: new Set(), badPages: false, slow: false }
+  const state = { offline: false, denied: new Set(), badPages: false, slow: false, missingCounts: false, episodeTimeout: false }
   const movies = Array.from({ length: count }, (_, index) => sampleMovie(String(index + 1), { Tmdb: String(1000 + index) }, {
     Name: ['星际穿越', '千与千寻', '海上钢琴师', '楚门的世界', '天使爱美丽', '机器人总动员'][index % 6] + ` · ${index + 1}`,
     ImageTags: index === 0 ? { Primary: 'test-tag' } : undefined
@@ -47,8 +47,29 @@ export async function mockEmby(label, { count = 29, requireCompatAuth = false, l
     if (path === '/Users/same-user-id/Items') {
       const start = Number(url.searchParams.get('StartIndex'))
       // 故意比客户端请求页大小更小，验证依照实际返回数量推进分页。
-      const items = catalog.slice(state.badPages ? 0 : start, (state.badPages ? 0 : start) + 23)
-      return json(200, { Items: items, TotalRecordCount: catalog.length })
+      const parent = url.searchParams.get('ParentId')
+      const folder = { Id: 'folder', Type: 'Folder', Name: '待核对的剧集' }
+      const box = { Id: 'box', Type: 'BoxSet', Name: '合集' }
+      const boxMovie = sampleMovie('box-movie', { Tmdb: '7777' })
+      const filtered = limitedCatalog && parent === 'view' ? [...movies, folder, box]
+        : limitedCatalog && parent === 'box' ? [series, boxMovie, { Id: 'view', Type: 'CollectionFolder' }]
+          : catalog
+      const selected = filtered
+      const items = selected.slice(state.badPages ? 0 : start, (state.badPages ? 0 : start) + 23)
+      return json(200, { Items: items, TotalRecordCount: selected.length + (limitedCatalog && !parent ? 3 : 0) })
+    }
+    if (limitedCatalog && path === '/Users/same-user-id/Items/folder') return json(200, { Id: 'folder', Type: 'Series', Name: '目录详情确认的剧集' })
+    if (limitedCatalog && path === '/Shows/folder/Seasons') return json(200, { Items: [{ Id: 'folder-season', Type: 'Season', SeriesId: 'folder', IndexNumber: 1, ChildCount: 3 }], TotalRecordCount: 1 })
+    if (limitedCatalog && path === '/Shows/series/Seasons') {
+      return json(200, { Items: [
+        { Id: 's1', Type: 'Season', SeriesId: 'series', IndexNumber: 1, ChildCount: state.missingCounts ? undefined : 30 },
+        { Id: 's2', Type: 'Season', SeriesId: 'series', IndexNumber: 2, ChildCount: 25 }
+      ], TotalRecordCount: 2 })
+    }
+    if (limitedCatalog && path === '/Shows/series/Episodes') {
+      if (state.episodeTimeout) return json(503, {})
+      const start = Number(url.searchParams.get('StartIndex'))
+      return json(200, { Items: episodes.slice(start, start + 23), TotalRecordCount: episodes.length })
     }
     if (path.endsWith('/Views')) return json(200, { Items: [{ Id: 'view', Name: `${label} 的电影与电视剧`, CollectionType: 'mixed' }] })
     if (path.endsWith('/Latest')) return json(200, movies.slice(0, 6))

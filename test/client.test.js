@@ -10,7 +10,7 @@ test('极影视兼容层要求 X-Emby-Authorization，登录和后续读取均�
   const client = new EmbyClient({ interval: 1, retries: 0 })
   const secret = await client.login(server, { username: 'fixture-user', password: 'fixture-pass' })
   assert.equal(secret.userId, 'same-user-id')
-  const items = await client.catalog(server, secret)
+  const { items } = await client.catalog(server, secret)
   assert.equal(items.length, mock.catalog.length)
   const views = await client.request(server, `/Users/${secret.userId}/Views`, { token: secret.token })
   assert.equal(views.Items.length, 1)
@@ -68,4 +68,25 @@ test('网络超时返回脱敏错误，禁止 SVG 海报和超大响应', async 
   await assert.rejects(client.request({ id: 'id', url: 'http://localhost' }, '/image', { image: true }), /不支持/)
   client.fetchImpl = async () => new Response(Buffer.alloc(8 * 1024 * 1024 + 1), { headers: { 'Content-Type': 'image/png' } })
   await assert.rejects(client.request({ id: 'id', url: 'http://localhost' }, '/image', { image: true }), /过大/)
+})
+
+test('递归未返回单集且忽略 Episode 条件时，走用户目录回退而不误报零', async t => {
+  const mock = await mockEmby('probe', { limitedCatalog: true })
+  t.after(() => mock.close())
+  const server = { id: 'probe', url: mock.url }
+  const client = new EmbyClient({ interval: 1, retries: 0 })
+  const secret = await client.login(server, { username: 'fixture-user', password: 'fixture-pass' })
+  const request = client.request.bind(client)
+  client.request = async (server, path, options) => {
+    const url = new URL(path, server.url)
+    if (url.searchParams.get('IncludeItemTypes') === 'Movie,Series,Season,Episode') {
+      return { Items: [{ Id: 'series', Type: 'Series' }], TotalRecordCount: 1 }
+    }
+    return request(server, path, options)
+  }
+  const result = await client.catalog(server, secret)
+  assert.equal(result.mode, 'seasons')
+  assert.equal(result.items.filter(item => item.Type === 'Series').length, 2)
+  assert.ok(result.items.some(item => item.Id === 'box-movie'))
+  assert.ok(mock.calls.some(call => call.query.IncludeItemTypes === 'Episode'))
 })

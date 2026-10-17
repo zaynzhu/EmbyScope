@@ -139,7 +139,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
           response.writeHead(200, { 'Content-Type': image.mime })
           return response.end(image.buffer)
         }
-        return send(response, 200, service.detail(item[1], itemId, url.searchParams))
+        return send(response, 200, await service.readDetail(item[1], itemId, url.searchParams))
       }
       throw new RemoteError('接口不存在', 404)
     } catch (error) {
@@ -156,6 +156,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
   if (scheduler) service.tick()
   return { server, store, service, async close() {
     clearInterval(timer)
+    service.stopping = true
     await new Promise(resolve => server.close(resolve))
     await service.drain()
     store.close()

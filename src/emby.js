@@ -105,21 +105,90 @@ export class EmbyClient {
     if (typeof result.AccessToken !== 'string' || typeof result.User?.Id !== 'string') throw new RemoteError('登录响应缺少用户令牌')
     return { ...secret, token: result.AccessToken, userId: result.User.Id }
   }
-  async catalog(server, secret) {
+  async catalog(server, secret, progress = () => {}) {
+    const path = `/Users/${encodeURIComponent(secret.userId)}/Items`
+    const fields = { Recursive: 'true', Fields: 'Overview,Genres,ProviderIds,DateCreated', EnableUserData: 'true' }
+    let items
+    let compatible = false
+    try {
+      items = await this.pages(server, secret, path, { ...fields, IncludeItemTypes: 'Movie,Series,Season,Episode' }, ['Movie', 'Series', 'Season', 'Episode'])
+    } catch (error) {
+      if (!error.unsupportedTypes) throw error
+      compatible = true
+    }
+    // 部分兼容层只返回作品，且忽略 Episode 筛选；空单集不能直接解释为零。
+    if (!compatible && items.some(item => item.Type === 'Series') && !items.some(item => item.Type === 'Episode')) {
+      const query = new URLSearchParams({ ...fields, IncludeItemTypes: 'Episode', Limit: '1' })
+      const probe = await this.request(server, `${path}?${query}`, { token: secret.token })
+      if (!Array.isArray(probe.Items)) throw new RemoteError('单集探测响应不完整')
+      compatible = probe.Items.some(item => item.Type !== 'Episode')
+    }
+    if (!compatible) return { items, mode: 'recursive' }
+    return { items: await this.hierarchy(server, secret, path, progress), mode: 'seasons' }
+  }
+  async hierarchy(server, secret, path, progress) {
+    const views = await this.request(server, `/Users/${encodeURIComponent(secret.userId)}/Views`, { token: secret.token })
+    if (!Array.isArray(views.Items)) throw new RemoteError('媒体库响应不完整')
+    const queue = views.Items.map(item => item.Id)
+    const visited = new Set()
+    const works = new Map()
+    for (let index = 0; index < queue.length; index++) {
+      const parentId = queue[index]
+      if (typeof parentId !== 'string' || !parentId) throw new RemoteError('媒体库标识无效')
+      if (visited.has(parentId)) continue
+      if (visited.size >= 10000) throw new RemoteError('超过目录遍历安全上限，保留上次完整缓存')
+      visited.add(parentId)
+      progress({ directories: visited.size, discovered: new Set(queue).size, items: works.size })
+      const children = await this.pages(server, secret, path, {
+        ParentId: parentId, Recursive: 'false', Fields: 'Overview,Genres,ProviderIds,DateCreated', EnableUserData: 'true'
+      })
+      for (let item of children) {
+        // 兼容层列表可能将电视剧标成 Folder，以用户详情接口确认后再分类。
+        if (item.Type === 'Folder') {
+          const detail = await this.request(server, `${path}/${encodeURIComponent(item.Id)}`, { token: secret.token })
+          if (detail.Id !== item.Id || typeof detail.Type !== 'string') throw new RemoteError('目录详情响应不完整')
+          item = detail
+        }
+        if (['Folder', 'BoxSet', 'CollectionFolder'].includes(item.Type)) queue.push(item.Id)
+        else if (['Movie', 'Series', 'Season', 'Episode'].includes(item.Type)) {
+          const previous = works.get(item.Id)
+          if (previous && previous.Type !== item.Type) throw new RemoteError('目录条目类型冲突，保留上次完整缓存')
+          works.set(item.Id, item)
+          if (works.size > 1000000) throw new RemoteError('超过同步安全上限，未替换完整缓存')
+        }
+      }
+    }
+    return [...works.values()]
+  }
+  async seasons(server, secret, seriesId) {
+    const items = await this.pages(server, secret, `/Shows/${encodeURIComponent(seriesId)}/Seasons`, { UserId: secret.userId })
+    if (items.some(item => item.Type !== 'Season' || (item.SeriesId && item.SeriesId !== seriesId) || !Number.isInteger(item.ChildCount) || item.ChildCount < 0)) {
+      throw new RemoteError('季接口缺少可信单集数量，尚不能汇总')
+    }
+    return items
+  }
+  async episodes(server, secret, seriesId) {
+    const items = await this.pages(server, secret, `/Shows/${encodeURIComponent(seriesId)}/Episodes`, { UserId: secret.userId, Fields: 'Overview,Genres,ProviderIds,DateCreated' })
+    if (items.some(item => item.Type !== 'Episode' || item.SeriesId !== seriesId)) throw new RemoteError('单集接口返回了不属于本剧的条目')
+    return items
+  }
+  async pages(server, secret, path, filters, allowedTypes) {
     const items = []
     const seen = new Set()
     let expected = null
     for (let page = 0; page < 2000; page++) {
-      const query = new URLSearchParams({
-        Recursive: 'true', IncludeItemTypes: 'Movie,Series,Season,Episode', Fields: 'Overview,Genres,ProviderIds,DateCreated',
-        EnableUserData: 'true', EnableTotalRecordCount: 'true', SortBy: 'SortName', SortOrder: 'Ascending', Limit: '500', StartIndex: String(items.length)
-      })
-      const result = await this.request(server, `/Users/${encodeURIComponent(secret.userId)}/Items?${query}`, { token: secret.token })
+      const query = new URLSearchParams({ ...filters, EnableTotalRecordCount: 'true', Limit: '500', StartIndex: String(items.length) })
+      const result = await this.request(server, `${path}?${query}`, { token: secret.token })
       if (!Array.isArray(result.Items) || !Number.isInteger(result.TotalRecordCount) || result.TotalRecordCount < 0) throw new RemoteError('片库响应不完整，保留上次完整缓存')
+      if (allowedTypes && result.Items.some(item => !allowedTypes.includes(item.Type))) {
+        const error = new RemoteError('递归类型筛选不可用，需按目录读取')
+        error.unsupportedTypes = true
+        throw error
+      }
       if (expected !== null && expected !== result.TotalRecordCount) throw new RemoteError('同步期间片库发生变化，请重新刷新')
       expected = result.TotalRecordCount
       for (const item of result.Items) {
-        if (!item.Id || seen.has(item.Id)) throw new RemoteError('分页条目重复，保留上次完整缓存')
+        if (typeof item.Id !== 'string' || !item.Id || seen.has(item.Id)) throw new RemoteError('分页条目重复，保留上次完整缓存')
         seen.add(item.Id)
         items.push(item)
       }

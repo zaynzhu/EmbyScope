@@ -62,7 +62,9 @@ function statusLabel(server) {
 function statusCards(servers) {
   return `<div class="status-list">${servers.map(server => `<div class="server-status"><div class="status-title"><strong>${e(server.name)}</strong>${statusLabel(server)}</div>
     <small>片库缓存 ${date(server.datasets.catalog.updatedAt)}${server.datasets.catalog.stale ? ' · 旧数据' : ''}</small>
-    ${server.error ? `<small>${e(server.error)}</small>` : '<small>统计范围：当前 Emby 账号可见条目</small>'}</div>`).join('')}</div>`
+    ${server.error ? `<small>${e(server.error)}</small>` : '<small>统计范围：当前 Emby 账号可见条目</small>'}
+    ${server.catalogProgress ? `<small>目录读取：${server.catalogProgress.directories} / ${server.catalogProgress.discovered} 个已发现目录 · 已找到 ${count(server.catalogProgress.items)} 条媒体</small>` : ''}
+    ${server.episodeSync ? `<small>单集核对：${server.episodeSync.completed} / ${server.episodeSync.series} 部剧 · ${server.episodeSync.syncing ? '后台补全中' : server.episodeSync.total === null ? '待补全' : '已核对'} · 已核对 ${count(server.episodeSync.knownEpisodes)} 集${server.episodeSync.failed ? ` · ${server.episodeSync.failed} 部读取异常` : ''}</small><small>按季接口集数汇总 · 最旧核对 ${date(server.episodeSync.updatedAt)}${server.episodeSync.stale ? ' · 旧数据' : ''} · 缓存 ${server.episodeSync.cacheHours} 小时</small>` : ''}</div>`).join('')}</div>`
 }
 
 function datasetNotice(servers, kind) {
@@ -128,7 +130,7 @@ function overview(data) {
   return heading(title, '你的媒体收藏，在这里汇合。', '<button data-action="refresh">↻ 刷新数据</button><button class="primary" data-nav="library">浏览片库</button>') +
     statusCards(data.servers) +
     `<div class="stats">${[['媒体库', stats.libraries, '当前账号可见'], ['电影', stats.movies, '各服条目合计'], ['电视剧', stats.series, '各服条目合计'], ['单集', stats.episodes, '各服条目合计'], ['作品条目', stats.entries, '电影 + 电视剧'], ['去重作品', stats.uniqueWorks, '按有效编号匹配']].map(([name, value, hint], index) => `<div class="stat ${index === 5 ? 'accent' : ''}"><small>${name}</small><strong>${count(value)}</strong><span>${hint}</span></div>`).join('')}</div>
-    <p class="notice">${stats.complete ? '统计覆盖全部所选服务器的可用缓存。' : `当前 ${stats.knownServers} / ${stats.totalServers} 台服务器具有片库缓存，数值为已知部分合计。`}${stats.limitedServers ? ` ${stats.limitedServers} 台服务器未遵循筛选条件，无法确认完整片库及单集总数。` : ''} 每 ${data.cacheMinutes} 分钟自动同步。${stats.conflicts ? ` 有 ${stats.conflicts} 个编号冲突条目独立保留。` : ''} 编号缺失时不按同名合并；去重作品数包含无法确认是否重复的独立条目。</p>
+    <p class="notice">${stats.complete ? '统计覆盖全部所选服务器的可用缓存。' : `当前 ${stats.knownServers} / ${stats.totalServers} 台服务器具有片库缓存，数值为已知部分合计。`}${data.servers.some(server => server.episodeSync?.total === null) ? ' 单集总数正在按季接口补全，尚未核对完时显示不可用。' : ''}${stats.limitedServers ? ` ${stats.limitedServers} 台服务器未遵循筛选条件，无法确认完整片库及单集总数。` : ''} 每 ${data.cacheMinutes} 分钟自动同步。${stats.conflicts ? ` 有 ${stats.conflicts} 个编号冲突条目独立保留。` : ''} 编号缺失时不按同名合并；去重作品数包含无法确认是否重复的独立条目。</p>
     <section class="panel"><div class="section-title"><h2>我的媒体库</h2><small>当前账号的顶层媒体库</small></div>${datasetNotice(data.servers, 'views')}
     ${data.views.length ? `<div class="libraries">${data.views.map(view => `<div class="library-tile"><span class="library-symbol" aria-hidden="true">${view.type === 'tvshows' ? '▤' : '▥'}</span><div><strong>${e(view.name)}</strong><small>${e(view.serverName)}</small></div></div>`).join('')}</div>` : '<div class="empty">暂无可用媒体库</div>'}</section>
     <section class="panel"><div class="section-title"><h2>最近入库</h2><small>按各服入库时间合并 · 最多 24 条</small></div>${datasetNotice(data.servers, 'latest')}${mediaCards(data.latest)}</section>
@@ -214,6 +216,7 @@ async function showDetail(serverId, id, params = new URLSearchParams()) {
       <div class="detail-source"><strong>资源来源：${e(item.serverName)}</strong><br>仅对应此服务器的条目，其他来源请点击片库卡片上的来源标签。<br>缓存时间：${date(item.cache.updatedAt)}${item.cache.stale ? ' · 旧缓存' : ''}${item.cache.warning ? `<br>${e(item.cache.warning)}` : ''}</div>
       <div class="metadata">${Object.entries(item.providerIds).map(([key, value]) => `<span>${e(key.toUpperCase())} ${e(value)}</span>`).join('') || '<small>未提供有效外部编号，独立保留。</small>'}</div>
       ${['Series', 'Episode', 'Season'].includes(item.type) ? `<section><div class="section-title"><h2>季集信息</h2><select id="season-select" data-server="${e(serverId)}" data-id="${e(id)}" aria-label="选择季"><option value="">全部季</option>${item.seasons.map(season => `<option value="${season}" ${params.get('season') === String(season) ? 'selected' : ''}>第 ${season} 季</option>`).join('')}</select></div>
+        ${item.seasonEpisodeTotal !== null ? `<p class="notice">季接口返回共 ${count(item.seasonEpisodeTotal)} 集；下方列表按单集接口实际读取结果展示。</p>` : ''}<p class="notice">单集明细缓存：${date(item.episodeUpdatedAt)}</p>${item.episodeError ? `<p class="notice">单集明细：${e(item.episodeError)}。暂不能展示完整列表。</p>` : ''}
         ${item.episodes.length ? item.episodes.map(episode => `<div class="episode"><span>${e(episode.title)}</span><small>${episode.season == null ? '未知季' : `S${episode.season}`} · ${episode.episode == null ? '未知集' : `E${episode.episode}`}</small></div>`).join('') : '<div class="empty">当前账号暂无可展示的季集信息</div>'}
         <div class="pagination"><button data-episode-page="${item.episodePage - 1}" data-server="${e(serverId)}" data-id="${e(id)}" ${item.episodePage === 1 ? 'disabled' : ''}>上一页</button><span>${item.episodePage} / ${item.episodePages} 页</span><button data-episode-page="${item.episodePage + 1}" data-server="${e(serverId)}" data-id="${e(id)}" ${item.episodePage === item.episodePages ? 'disabled' : ''}>下一页</button></div></section>` : ''}`)
   } catch (error) { if (dialog.open) openDialog('详情不可用', `<div class="empty">${e(error.message)}</div>`) }

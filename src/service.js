@@ -9,6 +9,10 @@ export class Service {
     this.cacheMinutes = cacheMinutes
     this.jobs = new Map()
     this.images = new Map()
+    this.seasonJobs = new Map()
+    this.catalogProgress = new Map()
+    this.detailJobs = new Map()
+    this.stopping = false
   }
   publicServer(row) {
     const { id, name, url, status, error, attemptedAt } = row
@@ -23,7 +27,7 @@ export class Service {
     }
     const warning = datasets.catalog.warning
     return { id, name, url, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
-      error: error || warning, attemptedAt, syncing: this.jobs.has(id), datasets }
+      error: error || warning, attemptedAt, syncing: this.jobs.has(id), catalogProgress: this.catalogProgress.get(id) || null, episodeSync: this.episodeSummary(row), datasets }
   }
   catalogWarning(cache) {
     return cache?.data?.some(item => !['Movie', 'Series', 'Season', 'Episode'].includes(item.type))
@@ -81,7 +85,10 @@ export class Service {
     if (!row) return Promise.resolve()
     const job = this.sync(row).catch(() => {
       if (this.current(row)) this.store.db.prepare("UPDATE servers SET status='error',error='同步失败，未完整更新' WHERE id=?").run(id)
-    }).finally(() => this.jobs.delete(id))
+    }).finally(() => {
+      this.jobs.delete(id)
+      this.catalogProgress.delete(id)
+    })
     this.jobs.set(id, job)
     return job
   }
@@ -95,6 +102,23 @@ export class Service {
       .run(row.id, kind, JSON.stringify(denied ? null : previous?.data ?? null), denied ? '' : previous?.updatedAt || '', error.message)
     if (denied) this.store.db.prepare('DELETE FROM images WHERE serverId=?').run(row.id)
   }
+  invalidateAuth(row, error) {
+    if (!this.current(row)) return
+    const secret = this.store.decrypt(row.secret)
+    delete secret.token
+    delete secret.userId
+    this.store.db.exec('BEGIN')
+    try {
+      this.store.db.prepare('DELETE FROM cache WHERE serverId=?').run(row.id)
+      this.store.db.prepare('DELETE FROM images WHERE serverId=?').run(row.id)
+      this.store.db.prepare("UPDATE servers SET revision=revision+1,secret=?,status='denied',error=? WHERE id=?")
+        .run(this.store.encrypt(secret), error.message, row.id)
+      this.store.db.exec('COMMIT')
+    } catch (error) {
+      this.store.db.exec('ROLLBACK')
+      throw error
+    }
+  }
   async sync(row) {
     let secret = this.store.decrypt(row.secret)
     this.store.db.prepare('UPDATE servers SET attemptedAt=? WHERE id=?').run(new Date().toISOString(), row.id)
@@ -106,7 +130,15 @@ export class Service {
       }
       const userPath = `/Users/${encodeURIComponent(secret.userId)}`
       const tasks = {
-        catalog: async () => (await this.client.catalog(row, secret)).map(item => normalizeItem(item, row.id)),
+        catalog: async () => {
+          const result = await this.client.catalog(row, secret, progress => {
+            if (this.stopping || !this.current(row)) throw new RemoteError('连接已变更或应用正在停止', 409)
+            this.catalogProgress.set(row.id, progress)
+          })
+          const items = result.items.map(item => normalizeItem(item, row.id))
+          if (this.current(row)) this.store.saveCache(row.id, 'catalogInfo', { mode: result.mode })
+          return items
+        },
         views: async () => {
           const result = await this.client.request(row, `${userPath}/Views`, { token: secret.token })
           if (!Array.isArray(result.Items)) throw new RemoteError('媒体库响应不完整')
@@ -132,23 +164,125 @@ export class Service {
         } catch (error) {
           const safe = error instanceof RemoteError ? error : new RemoteError('接口数据格式不完整')
           this.failCache(row, kind, safe)
+          if (kind === 'catalog' && safe.status === 403) {
+            this.invalidateAuth(row, safe)
+            return
+          }
           if (![403, 404].includes(safe.status)) throw safe
           partial = true
         }
       }
-      if (this.current(row)) this.store.db.prepare('UPDATE servers SET status=?,error=? WHERE id=?').run(partial ? 'partial' : 'online', partial ? '部分接口无权限或不可用' : null, row.id)
+      if (this.current(row)) {
+        this.store.db.prepare('UPDATE servers SET status=?,error=? WHERE id=?').run(partial ? 'partial' : 'online', partial ? '部分接口无权限或不可用' : null, row.id)
+        this.startSeasonSync(row)
+      }
     } catch (error) {
-      if (!this.current(row)) return
+      if (this.stopping || !this.current(row)) return
       const safe = error instanceof RemoteError ? error : new RemoteError('接口数据格式不完整')
       for (const kind of ['catalog', 'views', 'latest', 'resume']) this.failCache(row, kind, safe)
       if (safe.status === 401) {
-        delete secret.token
-        delete secret.userId
-        this.store.db.prepare('UPDATE servers SET secret=? WHERE id=?').run(this.store.encrypt(secret), row.id)
+        this.invalidateAuth(row, safe)
+        return
       }
       this.store.db.prepare('UPDATE servers SET status=?,error=? WHERE id=?')
         .run([401, 403].includes(safe.status) ? 'denied' : 'offline', safe.message, row.id)
     }
+  }
+  seasonMode(id) { return this.store.cache(id, 'catalogInfo')?.data?.mode === 'seasons' }
+  episodeSummary(row) {
+    if (!this.seasonMode(row.id)) return null
+    const catalog = this.store.cache(row.id, 'catalog')
+    const series = (catalog?.data || []).filter(item => item.type === 'Series')
+    const caches = new Map(this.store.db.prepare("SELECT * FROM cache WHERE serverId=? AND kind LIKE 'seasons:%'").all(row.id).map(cache => [cache.kind.slice(8), cache]))
+    let completed = 0
+    let total = 0
+    let failed = 0
+    let oldest = null
+    const ttl = Math.max(1440, this.cacheMinutes) * 60000
+    for (const item of series) {
+      const cache = caches.get(item.id)
+      if (cache?.error) failed++
+      const seasons = cache ? JSON.parse(cache.data) : null
+      if (!Array.isArray(seasons)) continue
+      completed++
+      total += seasons.reduce((sum, season) => sum + season.episodeCount, 0)
+      if (!oldest || cache.updatedAt < oldest) oldest = cache.updatedAt
+    }
+    return { completed, series: series.length, failed, knownEpisodes: total,
+      total: catalog?.data && completed === series.length ? total : null,
+      updatedAt: oldest, stale: failed > 0 || !!oldest && Date.now() - Date.parse(oldest) > ttl,
+      syncing: this.seasonJobs.has(row.id), cacheHours: Math.max(1440, this.cacheMinutes) / 60 }
+  }
+  startSeasonSync(row) {
+    if (this.stopping || this.seasonJobs.has(row.id) || !this.seasonMode(row.id) || !this.current(row)) return
+    if (Date.now() - (this.store.cache(row.id, 'seasonRetry')?.data?.at || 0) < this.cacheMinutes * 60000) return
+    const secret = this.store.decrypt(this.store.server(row.id).secret)
+    if (!secret.token) return
+    const series = (this.store.cache(row.id, 'catalog')?.data || []).filter(item => item.type === 'Series')
+    const ttl = Math.max(1440, this.cacheMinutes) * 60000
+    const pending = series.filter(item => {
+      const cache = this.store.cache(row.id, `seasons:${item.id}`)
+      if (cache?.error && Date.now() - (this.store.cache(row.id, `seasonAttempt:${item.id}`)?.data?.at || 0) < this.cacheMinutes * 60000) return false
+      return !cache?.data || cache.error || Date.now() - Date.parse(cache.updatedAt) >= ttl
+    })
+    if (!pending.length) return
+    const job = (async () => {
+      for (const item of pending) {
+        if (this.stopping || !this.current(row)) return
+        const kind = `seasons:${item.id}`
+        try {
+          const seasons = await this.client.seasons(row, secret, item.id)
+          if (!this.current(row)) return
+          this.store.saveCache(row.id, kind, seasons.map(season => ({ ...normalizeItem(season, row.id), episodeCount: season.ChildCount })))
+        } catch (error) {
+          if (!this.current(row)) return
+          const safe = error instanceof RemoteError ? error : new RemoteError('季接口数据格式不完整')
+          this.failCache(row, kind, safe)
+          // 失败检查时间独立保存，不把旧数据标为刚刚更新。
+          this.store.saveCache(row.id, `seasonAttempt:${item.id}`, { at: Date.now() })
+          if (safe.status === 401) {
+            this.invalidateAuth(row, safe)
+            return
+          }
+          if (safe.status >= 500 || safe.status === 429 || safe.message === '连接失败或请求超时') {
+            this.store.saveCache(row.id, 'seasonRetry', { at: Date.now() })
+            return
+          }
+        }
+      }
+    })().catch(() => {}).finally(() => this.seasonJobs.delete(row.id))
+    this.seasonJobs.set(row.id, job)
+  }
+  async readDetail(serverId, itemId, params) {
+    const item = this.findItem(serverId, itemId)
+    const seriesId = item.type === 'Series' ? item.id : item.seriesId
+    if (seriesId && this.seasonMode(serverId)) {
+      const row = this.store.server(serverId)
+      const kind = `episodes:${seriesId}`
+      const cache = this.store.cache(serverId, kind)
+      const attempt = this.store.cache(serverId, `episodeAttempt:${seriesId}`)?.data?.at || 0
+      if ((!cache?.data || Date.now() - Date.parse(cache.updatedAt) > this.cacheMinutes * 60000) && Date.now() - attempt > 60000) {
+        const key = `${serverId}:${row.revision}:${seriesId}`
+        if (!this.detailJobs.has(key)) {
+          const job = (async () => {
+            try {
+              const items = await this.client.episodes(row, this.store.decrypt(row.secret), seriesId)
+              if (this.current(row)) this.store.saveCache(serverId, kind, items.map(child => normalizeItem(child, serverId)))
+            } catch (error) {
+              const safe = error instanceof RemoteError ? error : new RemoteError('单集接口响应不完整')
+              if (safe.status === 401) this.invalidateAuth(row, safe)
+              else this.failCache(row, kind, safe)
+            } finally {
+              if (this.current(row)) this.store.saveCache(serverId, `episodeAttempt:${seriesId}`, { at: Date.now() })
+            }
+          })().finally(() => this.detailJobs.delete(key))
+          this.detailJobs.set(key, job)
+        }
+        await this.detailJobs.get(key)
+        if (!this.current(row)) throw new RemoteError('连接已变更，请重新打开详情', 409)
+      }
+    }
+    return this.detail(serverId, itemId, params)
   }
   selected(serverId) {
     const servers = this.store.servers()
@@ -168,15 +302,18 @@ export class Service {
     const viewsKnown = rows.filter(row => this.store.cache(row.id, 'views')?.data != null).length
     const groups = groupWorks(works)
     const limitedServers = rows.filter(row => this.catalogWarning(this.store.cache(row.id, 'catalog'))).length
+    const episodeSummaries = rows.map(row => this.episodeSummary(row))
+    const episodesUnknown = rows.some((row, index) => !this.store.cache(row.id, 'catalog')?.data || episodeSummaries[index] && episodeSummaries[index].total === null)
+    const episodeTotal = rows.reduce((sum, row, index) => sum + (episodeSummaries[index]?.total ?? (this.store.cache(row.id, 'catalog')?.data || []).filter(item => item.type === 'Episode').length), 0)
     const count = type => known ? catalog.filter(item => item.type === type).length : null
     return {
       servers: rows.map(row => this.publicServer(row)), cacheMinutes: this.cacheMinutes,
-      stats: { movies: count('Movie'), series: count('Series'), episodes: limitedServers ? null : count('Episode'),
+      stats: { movies: count('Movie'), series: count('Series'), episodes: limitedServers || episodesUnknown || !rows.length ? null : episodeTotal,
         libraries: viewsKnown ? this.collect(rows, 'views').length : null,
         entries: known ? works.length : null, uniqueWorks: known ? groups.length : null,
         conflicts: known ? groups.filter(item => item.conflict).length : null,
         knownServers: known, totalServers: rows.length, limitedServers,
-        complete: known === rows.length && rows.length > 0 && limitedServers === 0,
+        complete: known === rows.length && rows.length > 0 && limitedServers === 0 && !episodesUnknown,
         history: null, historyReason: '不可用：未接入可解释的播放历史，当前账号的继续观看不代表全站播放统计。' },
       views: this.collect(rows, 'views'),
       latest: this.collect(rows, 'latest').sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 24),
@@ -210,15 +347,20 @@ export class Service {
     const item = this.findItem(serverId, itemId)
     const catalog = this.store.cache(serverId, 'catalog')
     const seriesId = item.type === 'Series' ? item.id : item.seriesId
-    let episodes = seriesId ? (catalog?.data || []).filter(child => child.seriesId === seriesId && child.type === 'Episode') : []
+    const compatible = this.seasonMode(serverId)
+    const episodeCache = compatible && seriesId ? this.store.cache(serverId, `episodes:${seriesId}`) : null
+    const seasonCache = compatible && seriesId ? this.store.cache(serverId, `seasons:${seriesId}`) : null
+    let episodes = seriesId ? (compatible ? episodeCache?.data || [] : catalog?.data || []).filter(child => child.seriesId === seriesId && child.type === 'Episode') : []
     episodes.sort((a, b) => (a.season ?? -1) - (b.season ?? -1) || (a.episode ?? -1) - (b.episode ?? -1) || a.id.localeCompare(b.id))
-    const seasons = [...new Set(episodes.map(child => child.season).filter(value => value !== null))].sort((a, b) => a - b)
+    const seasons = [...new Set([...episodes.map(child => child.season), ...(seasonCache?.data || []).map(season => season.episode)].filter(value => value !== null))].sort((a, b) => a - b)
     if (params.has('season')) episodes = episodes.filter(child => child.season === Number(params.get('season')))
     const total = episodes.length
     const pages = Math.max(1, Math.ceil(total / 50))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
     return { ...item, serverName: this.store.server(serverId).name, nsfw: !!this.store.server(serverId).nsfw, seasons,
-      episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: catalog?.data && !this.catalogWarning(catalog) ? total : null,
+      episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: compatible ? (episodeCache?.data ? total : null) : catalog?.data && !this.catalogWarning(catalog) ? total : null,
+      episodeError: episodeCache?.error || null, episodeUpdatedAt: (compatible ? episodeCache?.updatedAt : catalog?.updatedAt) || null,
+      seasonEpisodeTotal: seasonCache?.data ? seasonCache.data.filter(season => !params.has('season') || season.episode === Number(params.get('season'))).reduce((sum, season) => sum + season.episodeCount, 0) : null,
       episodePage: page, episodePages: pages, cache: this.publicServer(this.store.server(serverId)).datasets.catalog }
   }
   async poster(serverId, itemId) {
@@ -246,8 +388,12 @@ export class Service {
   }
   tick() {
     for (const row of this.store.servers()) {
+      if (['online', 'partial'].includes(row.status)) this.startSeasonSync(row)
       if (!row.attemptedAt || Date.now() - Date.parse(row.attemptedAt) >= this.cacheMinutes * 60000) this.refresh(row.id)
     }
   }
-  async drain() { await Promise.allSettled([...this.jobs.values(), ...this.images.values()]) }
+  async drain() {
+    await Promise.allSettled([...this.jobs.values(), ...this.images.values(), ...this.detailJobs.values()])
+    await Promise.allSettled([...this.seasonJobs.values()])
+  }
 }
