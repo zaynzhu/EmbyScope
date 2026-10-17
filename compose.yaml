@@ -1,0 +1,42 @@
+services:
+  embyscope:
+    image: ${EMBYSCOPE_IMAGE:?请设置离线包清单中的镜像标签}
+    platform: linux/amd64
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-3000}:3000"
+    environment:
+      DATA_DIR: /data
+      PORT: "3000"
+      CACHE_MINUTES: ${CACHE_MINUTES:-60}
+      REQUEST_INTERVAL_MS: ${REQUEST_INTERVAL_MS:-2000}
+      REQUEST_TIMEOUT_MS: ${REQUEST_TIMEOUT_MS:-12000}
+      REQUEST_RETRIES: ${REQUEST_RETRIES:-1}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    volumes:
+      - ${DATA_PATH:?请设置配置目录的绝对路径}:/data
+    networks:
+      - media
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  media: {}

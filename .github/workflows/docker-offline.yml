@@ -1,0 +1,79 @@
+name: 构建并验证 amd64 离线包
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embyscope-offline-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: 模拟接口测试和语法检查
+        run: |
+          npm test
+          npm run check
+      - uses: docker/setup-buildx-action@v3
+      - name: 云端构建、运行验收及离线打包
+        run: bash scripts/cloud-build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: embyscope-amd64-candidate
+          path: dist/embyscope-linux-amd64/
+          retention-days: 7
+          compression-level: 0
+
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v4
+        with:
+          name: embyscope-amd64-candidate
+          path: bundle
+      - name: 干净 runner 校验并导入同一镜像
+        working-directory: bundle
+        run: |
+          sha256sum -c SHA256SUMS
+          docker load --input images.tar
+      - name: 从包内 Compose 启动并验证持久化
+        env:
+          DATA_PATH: ${{ runner.temp }}/embyscope-verify
+          APP_PORT: "33000"
+          BIND_ADDRESS: 127.0.0.1
+        run: |
+          set -euo pipefail
+          export EMBYSCOPE_IMAGE="$(node -p "require('./bundle/manifest.json').image")"
+          mkdir -p "$DATA_PATH"
+          chmod 777 "$DATA_PATH"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$EMBYSCOPE_IMAGE")" = linux/amd64
+          test "$(docker image inspect --format '{{.Id}}' "$EMBYSCOPE_IMAGE")" = "$(node -p "require('./bundle/manifest.json').imageId")"
+          docker compose -p embyscope-verify -f bundle/compose.yaml config --quiet
+          docker network create embyscope-existing
+          EXISTING_NETWORK=embyscope-existing docker compose -p embyscope-verify -f bundle/compose.yaml -f bundle/compose.external-network.yaml config --quiet
+          trap 'docker compose -p embyscope-verify -f bundle/compose.yaml down --volumes; docker network rm embyscope-existing' EXIT
+          docker compose -p embyscope-verify -f bundle/compose.yaml up -d --pull never --no-build
+          node scripts/smoke.mjs setup
+          docker compose -p embyscope-verify -f bundle/compose.yaml restart
+          node scripts/smoke.mjs login
+          node scripts/verification-report.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: embyscope-linux-amd64-verified
+          path: bundle/
+          retention-days: 30
+          compression-level: 0

@@ -1,0 +1,4 @@
+networks:
+  media:
+    name: ${EXISTING_NETWORK:?请设置已有 bridge 网络名称}
+    external: true
