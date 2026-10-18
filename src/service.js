@@ -1,4 +1,4 @@
-import { resourceLocations } from './resources.js'
+import { resourceLocations, RESOURCE_CACHE_VERSION } from './resources.js'
 import { randomUUID } from 'node:crypto'
 import { normalizeItem, groupWorks } from './identity.js'
 import { normalizeUrl, RemoteError } from './emby.js'
@@ -317,7 +317,7 @@ export class Service {
     const cached = this.store.cache(serverId, kind)
     const attempt = this.store.cache(serverId, `resourceAttempt:${itemId}`)?.data?.at || 0
     const key = `${serverId}:${row.revision}:${itemId}`
-    if ((!cached?.data || Date.now() - Date.parse(cached.updatedAt) > 86400000) && Date.now() - attempt > 60000) {
+    if ((!cached?.data || cached.data.version !== RESOURCE_CACHE_VERSION || Date.now() - Date.parse(cached.updatedAt) > 86400000) && Date.now() - attempt > 60000) {
       if (!this.resourceJobs.has(key)) {
         const job = (async () => {
           try {
@@ -325,7 +325,7 @@ export class Service {
             if (!secret.token) throw new RemoteError('登录失效，请刷新连接', 401)
             const raw = await this.client.request(row, `/Users/${encodeURIComponent(secret.userId)}/Items/${encodeURIComponent(itemId)}?Fields=Path,MediaSources`, { token: secret.token })
             if (raw.Id !== itemId) throw new RemoteError('资源详情标识不一致')
-            if (this.current(row)) this.store.saveCache(serverId, kind, resourceLocations(raw))
+            if (this.current(row)) this.store.saveCache(serverId, kind, { ...resourceLocations(raw), version: RESOURCE_CACHE_VERSION })
           } catch (error) {
             const safe = error instanceof RemoteError ? error : new RemoteError('资源详情响应不完整')
             if (safe.status === 401) this.invalidateAuth(row, safe)

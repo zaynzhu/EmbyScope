@@ -330,6 +330,11 @@ test('重复作品入口与额外条目数对应，详情按需读取各服位�
   const cached = await f.request(`/api/items/${aId}/1/resources`)
   assert.equal(f.a.calls.length, before + 1)
   assert.equal(cached.data.locations.length, 1)
+  f.app.store.saveCache(aId, 'resources:1', { locations: [], hiddenRemote: true })
+  f.app.store.db.prepare("DELETE FROM cache WHERE serverId=? AND kind='resourceAttempt:1'").run(aId)
+  const upgraded = (await f.request(`/api/items/${aId}/1/resources`)).data
+  assert.equal(upgraded.locations.length, 1)
+  assert.equal(f.a.calls.length, before + 2)
   assert.equal((await f.request(`/api/items/${bId}/1/resources`)).data.locations[0].path, '/media/B/1/video.mkv')
   assert.ok(!JSON.stringify(detail).includes('token=secret'))
   assert.ok(!JSON.stringify(detail).includes('user:password'))
