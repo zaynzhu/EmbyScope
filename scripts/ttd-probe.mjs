@@ -4,8 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
 // 独立诊断工具：只模拟上游，不转发请求，不接触真实媒体或 TTD 配置。
-export function createProbe({ allowedClient = '127.0.0.1' } = {}) {
+export function createProbe({ allowedClient = '127.0.0.1', upstreamStatus = 200 } = {}) {
   if (!isIP(allowedClient)) throw new Error('ALLOWED_CLIENT 必须是单个 IP 地址')
+  if (![200, 404].includes(upstreamStatus)) throw new Error('诊断响应只支持 200 或 404')
   const events = []
   const probeKey = 'embyscope-diagnostic-fake-key'
   const server = http.createServer((request, response) => {
@@ -37,15 +38,15 @@ export function createProbe({ allowedClient = '127.0.0.1' } = {}) {
     if (events.length > 30) events.shift()
     if (!['GET', 'HEAD'].includes(request.method)) return send(405, { error: '诊断上游只接受读取' })
     if (!matches && (token || authorization || queryKeys.some(key => /token|key/i.test(key)))) return send(403, { error: '请使用诊断假凭据' })
-    send(200, { ServerName: 'EmbyScope 诊断模拟器', Version: '4.8.0.0', Id: 'diagnostic-fixture' })
+    send(upstreamStatus, upstreamStatus === 404 ? { error: '诊断模拟 404' } : { ServerName: 'EmbyScope 诊断模拟器', Version: '4.8.0.0', Id: 'diagnostic-fixture' })
   })
   return { server, events, probeKey }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const probe = createProbe({ allowedClient: process.env.ALLOWED_CLIENT || '127.0.0.1' })
+  const probe = createProbe({ allowedClient: process.env.ALLOWED_CLIENT || '127.0.0.1', upstreamStatus: Number(process.env.PROBE_STATUS) || 200 })
   probe.server.listen(Number(process.env.PROBE_PORT) || 0, process.env.PROBE_HOST || '127.0.0.1', () => {
-    console.log(JSON.stringify({ port: probe.server.address().port, fakeCredential: probe.probeKey, note: '仅诊断模拟器，不是真实 Emby；不要保存到 TTD 配置' }))
+    console.log(JSON.stringify({ port: probe.server.address().port, fakeCredential: probe.probeKey, upstreamStatus: Number(process.env.PROBE_STATUS) || 200, note: '仅诊断模拟器，不是真实 Emby；不要保存到 TTD 配置' }))
   })
   const close = () => probe.server.close()
   process.once('SIGINT', close)
