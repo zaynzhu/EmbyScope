@@ -22,6 +22,8 @@ export class Store {
       PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS admin (id INTEGER PRIMARY KEY CHECK(id=1), hash TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT OR IGNORE INTO settings VALUES('automaticUpdates', 'false');
       CREATE TABLE IF NOT EXISTS servers (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
         secret TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,

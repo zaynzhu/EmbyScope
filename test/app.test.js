@@ -12,6 +12,7 @@ async function fixture(t, aOptions = {}) {
   const a = await mockEmby('A', aOptions)
   const b = await mockEmby('B')
   const app = createApp({ dataDir, scheduler: false, client: new EmbyClient({ interval: 1, timeout: 1000, retries: 0 }) })
+  app.service.updateSettings({ automaticUpdates: true })
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve))
   const origin = `http://127.0.0.1:${app.server.address().port}`
   let cookie = ''
@@ -428,4 +429,51 @@ test('季集每批最多20部，五分钟内不重复启动，缓存可继续下
   f.app.service.startSeasonSync(f.app.store.server(id))
   await f.app.service.drain()
   assert.equal(calls, 40)
+})
+
+test('关闭自动更新后小时、全库和季集均不请求；手动更新保留；重新开启后按周期执行', async t => {
+  const f = await fixture(t)
+  assert.equal((await f.request('/api/settings')).status, 401)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const id = await f.connect(f.a, '影院 A')
+  await f.app.service.drain()
+  assert.equal((await f.request('/api/settings', 'PUT', { automaticUpdates: false })).data.automaticUpdates, false)
+  assert.equal((await f.request('/api/settings', 'PUT', { automaticUpdates: 'false' })).status, 400)
+  f.app.store.db.prepare("UPDATE cache SET updatedAt='2000-01-01T00:00:00Z' WHERE kind='catalog'").run()
+  f.app.store.db.prepare("DELETE FROM cache WHERE kind='fullAttempt'").run()
+  f.app.store.db.prepare("UPDATE servers SET attemptedAt='2000-01-01T00:00:00Z'").run()
+  f.app.store.saveCache(id, 'catalogInfo', { mode: 'seasons' })
+  const before = f.a.calls.length
+  f.app.service.tick()
+  f.app.service.startSeasonSync(f.app.store.server(id))
+  await f.app.service.drain()
+  assert.equal(f.a.calls.length, before)
+  await f.request('/api/refresh', 'POST', { server: id, mode: 'light' })
+  await f.app.service.drain()
+  assert.equal(f.a.calls.length - before, 3)
+  assert.equal((await f.request('/api/settings')).data.automaticUpdates, false)
+  f.app.store.saveCache(id, 'catalogInfo', { mode: 'recursive' })
+  await f.request('/api/settings', 'PUT', { automaticUpdates: true })
+  f.app.service.tick()
+  await f.app.service.drain()
+  assert.ok(f.a.calls.slice(before + 3).some(call => call.path.endsWith('/Items')))
+})
+
+test('自动全库分页过程中暂停，不再发送后续页，保留旧完整缓存且不误报离线', async t => {
+  const f = await fixture(t)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const id = await f.connect(f.a, '影院 A')
+  await f.app.service.drain()
+  const old = f.app.store.cache(id, 'catalog')
+  const original = f.app.service.client.fetchImpl
+  f.app.service.client.fetchImpl = async (...args) => {
+    const response = await original(...args)
+    if (new URL(args[0]).pathname.endsWith('/Items')) f.app.service.updateSettings({ automaticUpdates: false })
+    return response
+  }
+  const before = f.a.calls.length
+  await f.app.service.refresh(id, { full: true, automatic: true })
+  assert.equal(f.a.calls.length - before, 1)
+  assert.deepEqual(f.app.store.cache(id, 'catalog'), old)
+  assert.equal(f.app.store.server(id).status, 'online')
 })

@@ -1,6 +1,6 @@
 const app = document.querySelector('#app')
 const dialog = document.querySelector('#dialog')
-const state = { page: 'overview', server: 'all', servers: [], query: '', type: '', duplicates: false, libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
+const state = { page: 'overview', server: 'all', servers: [], settings: { automaticUpdates: false }, query: '', type: '', duplicates: false, libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
 const titles = { overview: '概览', library: '片库', settings: '服务器设置' }
 const statuses = { online: '在线', offline: '离线', partial: '部分可用', denied: '认证 / 权限异常', pending: '等待同步', error: '同步异常' }
 const datasetNames = { catalog: '片库', views: '媒体库', latest: '最近入库', resume: '继续观看' }
@@ -155,9 +155,11 @@ function library(data) {
 
 function settings() {
   return heading('服务器设置', '一个 Emby，一个账号。连接信息仅保存在本地。', '<button class="primary" data-action="add">＋ 添加服务器</button>') +
+    `<section class="panel"><div class="section-title"><h2>自动更新设置 · ${state.settings.automaticUpdates ? '已开启' : '已暂停'}</h2><button data-action="toggle-updates">${state.settings.automaticUpdates ? '暂停全部自动更新' : '开启自动更新'}</button></div><p>总开关控制所有连接的轻量更新、完整校准和季集后台补全。默认关闭，重启后保持。暂停时仍可浏览已有缓存，手动更新和点击详情、海报可能按需请求远端。</p><p class="muted">暂停后正在进行的请求可能完成；自动任务会在后续步骤停止。读取会产生网络与服务端计算开销，不能保证零负载；不会调用扫盘、刮削、修改或删除接口。</p></section>` +
     '<p class="notice">填写 Emby 登录账号即可，无需管理员 API Key。账号密码及令牌加密存储；修改地址或账号会清除该连接的旧缓存。</p>' +
     (state.servers.length ? `<div class="settings-grid">${state.servers.map(server => `<article class="panel settings-card"><div class="status-title"><h2>${e(server.name)}${server.nsfw ? ' <span class="nsfw-tag">NSFW</span>' : ''}</h2>${statusLabel(server)}</div><p class="address">${e(server.url)}</p>
     ${server.error ? `<div class="warning">${e(server.error)}</div>` : ''}
+    <form class="schedule-form" data-id="${e(server.id)}"><h3>此服务器更新周期</h3><label>轻量更新间隔（分钟）<input name="lightMinutes" type="number" min="15" max="1440" value="${server.lightMinutes}" required></label><label>完整片库校准<select name="fullHours">${[[0, '仅手动'], [12, '每 12 小时'], [24, '每天一次'], [48, '每两天'], [168, '每周']].map(([value, label]) => `<option value="${value}" ${server.fullHours === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><small>${state.settings.automaticUpdates ? '按保存的周期自动执行' : '自动更新已暂停，保存周期不会开始读取'}</small><p class="form-error" role="alert"></p><button type="submit">保存更新周期</button></form>
     ${Object.entries(datasetNames).map(([kind, label]) => `<div class="dataset"><span>${label}</span><b>${server.datasets[kind].available ? `${date(server.datasets[kind].updatedAt)}${server.datasets[kind].stale ? ' · 旧缓存' : ''}` : '不可用 / 尚未同步'}${server.datasets[kind].error ? `<br><small>${e(server.datasets[kind].error)}</small>` : ''}</b></div>`).join('')}
     <div class="actions"><button data-edit="${e(server.id)}">编辑</button><button data-refresh="${e(server.id)}" ${server.syncing ? 'disabled' : ''}>同步</button><button class="subtle danger" data-delete="${e(server.id)}">删除</button></div></article>`).join('')}</div>` : emptyConnections())
 }
@@ -165,9 +167,10 @@ function settings() {
 async function loadView({ preserveSearch = false } = {}) {
   const request = ++state.request
   try {
-    const servers = await api('/api/servers')
+    const [servers, updateSettings] = await Promise.all([api('/api/servers'), api('/api/settings')])
     if (request !== state.request || !state.authenticated) return
     state.servers = servers
+    state.settings = updateSettings
     updateServers()
     const page = state.page
     const params = new URLSearchParams({ server: state.server, q: state.query, type: state.type, page: state.libraryPage, duplicates: state.duplicates })
@@ -175,7 +178,8 @@ async function loadView({ preserveSearch = false } = {}) {
     if (request !== state.request || !state.authenticated) return
     const focused = preserveSearch && document.activeElement?.id === 'search'
     const caret = focused ? document.activeElement.selectionStart : null
-    document.querySelector('#content').innerHTML = page === 'overview' ? overview(data) : page === 'library' ? library(data) : settings()
+    const paused = !state.settings.automaticUpdates && page !== 'settings' ? '<p class="notice">自动更新已暂停 · 正在查看缓存 <button data-nav="settings">更新设置</button></p>' : ''
+    document.querySelector('#content').innerHTML = paused + (page === 'overview' ? overview(data) : page === 'library' ? library(data) : settings())
     document.querySelector('#breadcrumb').textContent = titles[page]
     document.querySelectorAll('[data-nav]').forEach(button => button.toggleAttribute('aria-current', button.dataset.nav === page))
     document.querySelectorAll('nav [aria-current]').forEach(button => button.setAttribute('aria-current', 'page'))
@@ -241,7 +245,10 @@ document.addEventListener('click', async event => {
   const button = event.target.closest('button')
   if (!button) return
   try {
-    if (button.dataset.resource) {
+    if (button.dataset.action === 'toggle-updates') {
+      await api('/api/settings', 'PUT', { automaticUpdates: !state.settings.automaticUpdates })
+      await loadView()
+    } else if (button.dataset.resource) {
       button.disabled = true
       const identity = state.detail
       try {
@@ -351,6 +358,11 @@ document.addEventListener('submit', async event => {
       if (form.elements.confirm && form.elements.confirm.value !== password) throw new Error('两次密码不一致')
       await api(`/api/auth/${form.dataset.mode}`, 'POST', { password })
       await boot()
+    } else if (form.classList.contains('schedule-form')) {
+      const server = state.servers.find(server => server.id === form.dataset.id)
+      await api(`/api/servers/${server.id}`, 'PUT', { name: server.name, url: server.url, lightMinutes: Number(form.elements.lightMinutes.value), fullHours: Number(form.elements.fullHours.value) })
+      toast('更新周期已保存，自动更新总开关保持原状态')
+      await loadView()
     } else if (form.id === 'server-form') {
       const data = Object.fromEntries(new FormData(form))
       data.lightMinutes = Number(form.elements.lightMinutes.value)

@@ -49,6 +49,7 @@ export class EmbyClient {
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       try {
         return await this.limiter.run(url.origin, async () => {
+          if (server.canRequest && !server.canRequest()) throw new RemoteError('自动更新已暂停', 409)
           const authorization = `Emby Client="EmbyScope", Device="EmbyScope", DeviceId="${server.id}", Version="1.0.0"`
           const headers = {
             Authorization: authorization,

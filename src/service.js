@@ -16,6 +16,14 @@ export class Service {
     this.resourceJobs = new Map()
     this.stopping = false
   }
+  updateSettings(body) {
+    if (typeof body.automaticUpdates !== 'boolean') throw new RemoteError('自动更新开关必须为布尔值', 400)
+    this.store.db.prepare("UPDATE settings SET value=? WHERE name='automaticUpdates'").run(JSON.stringify(body.automaticUpdates))
+    return this.settings()
+  }
+  settings() {
+    return { automaticUpdates: this.store.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get()?.value === 'true' }
+  }
   publicServer(row) {
     const { id, name, url, status, error, attemptedAt } = row
     const datasets = {}
@@ -84,11 +92,11 @@ export class Service {
     if (!this.store.server(id)) throw new RemoteError('连接不存在', 404)
     this.store.db.prepare('DELETE FROM servers WHERE id=?').run(id)
   }
-  refresh(id, { full = true } = {}) {
+  refresh(id, { full = true, automatic = false } = {}) {
     if (this.jobs.has(id)) return this.jobs.get(id)
     const row = this.store.server(id)
     if (!row) return Promise.resolve()
-    const job = this.sync(row, { full }).catch(() => {
+    const job = this.sync(row, { full, automatic }).catch(() => {
       if (this.current(row)) this.store.db.prepare("UPDATE servers SET status='error',error='同步失败，未完整更新' WHERE id=?").run(id)
     }).finally(() => {
       this.jobs.delete(id)
@@ -124,7 +132,9 @@ export class Service {
       throw error
     }
   }
-  async sync(row, { full = true } = {}) {
+  async sync(row, { full = true, automatic = false } = {}) {
+    if (automatic && !this.settings().automaticUpdates) return
+    if (automatic) row = { ...row, canRequest: () => !this.stopping && this.settings().automaticUpdates && this.current(row) }
     let secret = this.store.decrypt(row.secret)
     this.store.db.prepare('UPDATE servers SET attemptedAt=? WHERE id=?').run(new Date().toISOString(), row.id)
     if (full) this.store.saveCache(row.id, 'fullAttempt', { at: Date.now() })
@@ -139,6 +149,7 @@ export class Service {
         catalog: async () => {
           const result = await this.client.catalog(row, secret, progress => {
             if (this.stopping || !this.current(row)) throw new RemoteError('连接已变更或应用正在停止', 409)
+            if (automatic && !this.settings().automaticUpdates) throw new RemoteError('自动更新已暂停', 409)
             this.catalogProgress.set(row.id, progress)
           })
           const items = result.items.map(item => normalizeItem(item, row.id))
@@ -165,11 +176,13 @@ export class Service {
       let partial = false
       for (const [kind, task] of Object.entries(tasks)) {
         if (!this.current(row)) return
+        if (automatic && !this.settings().automaticUpdates) return
         try {
           const data = await task()
           if (this.current(row)) this.store.saveCache(row.id, kind, data)
         } catch (error) {
           const safe = error instanceof RemoteError ? error : new RemoteError('接口数据格式不完整')
+          if (automatic && safe.status === 409 && !this.settings().automaticUpdates) return
           this.failCache(row, kind, safe)
           if (kind === 'catalog' && safe.status === 403) {
             this.invalidateAuth(row, safe)
@@ -221,11 +234,13 @@ export class Service {
       syncing: this.seasonJobs.has(row.id), batchSize: 20, batchMinutes: 5, cacheHours: Math.max(10080, this.cacheMinutes) / 60 }
   }
   startSeasonSync(row) {
+    if (!this.settings().automaticUpdates) return
     if (Date.now() - (this.store.cache(row.id, 'seasonBatch')?.data?.at || 0) < 5 * 60000) return
     if (this.stopping || this.seasonJobs.has(row.id) || !this.seasonMode(row.id) || !this.current(row)) return
     if (Date.now() - (this.store.cache(row.id, 'seasonRetry')?.data?.at || 0) < this.cacheMinutes * 60000) return
     const secret = this.store.decrypt(this.store.server(row.id).secret)
     if (!secret.token) return
+    row = { ...row, canRequest: () => !this.stopping && this.settings().automaticUpdates && this.current(row) }
     const series = (this.store.cache(row.id, 'catalog')?.data || []).filter(item => item.type === 'Series')
     const ttl = Math.max(10080, this.cacheMinutes) * 60000
     const pending = series.filter(item => {
@@ -237,7 +252,7 @@ export class Service {
     const job = (async () => {
       this.store.saveCache(row.id, 'seasonBatch', { at: Date.now() })
       for (const item of pending.slice(0, 20)) {
-        if (this.stopping || !this.current(row)) return
+        if (this.stopping || !this.current(row) || !this.settings().automaticUpdates) return
         const kind = `seasons:${item.id}`
         try {
           const seasons = await this.client.seasons(row, secret, item.id)
@@ -246,6 +261,7 @@ export class Service {
         } catch (error) {
           if (!this.current(row)) return
           const safe = error instanceof RemoteError ? error : new RemoteError('季接口数据格式不完整')
+          if (safe.status === 409 && !this.settings().automaticUpdates) return
           this.failCache(row, kind, safe)
           // 失败检查时间独立保存，不把旧数据标为刚刚更新。
           this.store.saveCache(row.id, `seasonAttempt:${item.id}`, { at: Date.now() })
@@ -444,13 +460,14 @@ export class Service {
     return task
   }
   tick() {
+    if (!this.settings().automaticUpdates) return
     for (const row of this.store.servers()) {
       if (['online', 'partial'].includes(row.status)) this.startSeasonSync(row)
       const catalog = this.store.cache(row.id, 'catalog')
       const fullAttempt = this.store.cache(row.id, 'fullAttempt')?.data?.at || 0
       const fullDue = (!catalog?.data || row.fullHours > 0 && Date.now() - Date.parse(catalog.updatedAt) >= row.fullHours * 3600000) && Date.now() - fullAttempt >= row.lightMinutes * 60000
-      if (fullDue) this.refresh(row.id, { full: true })
-      else if (!row.attemptedAt || Date.now() - Date.parse(row.attemptedAt) >= row.lightMinutes * 60000) this.refresh(row.id, { full: false })
+      if (fullDue) this.refresh(row.id, { full: true, automatic: true })
+      else if (!row.attemptedAt || Date.now() - Date.parse(row.attemptedAt) >= row.lightMinutes * 60000) this.refresh(row.id, { full: false, automatic: true })
     }
   }
   async drain() {

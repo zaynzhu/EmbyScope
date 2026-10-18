@@ -116,6 +116,8 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return send(response, 200, { ok: true })
       }
       if (path === '/api/servers' && method === 'GET') return send(response, 200, service.listServers())
+      if (path === '/api/settings' && method === 'GET') return send(response, 200, service.settings())
+      if (path === '/api/settings' && method === 'PUT') return send(response, 200, service.updateSettings(await readBody(request)))
       if (path === '/api/servers' && method === 'POST') return send(response, 201, service.saveServer(await readBody(request)))
       const connection = path.match(/^\/api\/servers\/([a-f0-9-]+)$/)
       if (connection && method === 'PUT') return send(response, 200, service.saveServer(await readBody(request), connection[1]))
