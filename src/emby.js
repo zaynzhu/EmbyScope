@@ -13,11 +13,12 @@ export class RateLimiter {
     this.queues = new Map()
     this.lastStart = new Map()
   }
-  run(key, work) {
+  run(key, work, signal) {
     const previous = this.queues.get(key) || Promise.resolve()
     const next = previous.catch(() => {}).then(async () => {
+      signal?.throwIfAborted()
       const nextStart = (this.lastStart.get(key) || 0) + this.interval
-      while (Date.now() < nextStart) await sleep(nextStart - Date.now())
+      while (Date.now() < nextStart) await sleep(nextStart - Date.now(), undefined, { signal })
       this.lastStart.set(key, Date.now())
       return work()
     })
@@ -43,11 +44,14 @@ export class EmbyClient {
     this.timeout = timeout
     this.retries = retries
     this.fetchImpl = fetchImpl
+    this.controller = new AbortController()
   }
+  close() { this.controller.abort() }
   async request(server, path, { token, body, image = false } = {}) {
     const url = new URL(`${server.url}${path}`)
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       try {
+        this.controller.signal.throwIfAborted()
         return await this.limiter.run(url.origin, async () => {
           if (server.canRequest && !server.canRequest()) throw new RemoteError('自动更新已暂停', 409)
           const authorization = `Emby Client="EmbyScope", Device="EmbyScope", DeviceId="${server.id}", Version="1.0.0"`
@@ -61,7 +65,7 @@ export class EmbyClient {
           if (body) headers['Content-Type'] = 'application/json'
           const response = await this.fetchImpl(url, {
             method: body ? 'POST' : 'GET', headers, body: body ? JSON.stringify(body) : undefined,
-            signal: AbortSignal.timeout(this.timeout), redirect: 'manual'
+            signal: AbortSignal.any([AbortSignal.timeout(this.timeout), this.controller.signal]), redirect: 'manual'
           })
           if (!response.ok) {
             await response.body?.cancel()
@@ -86,8 +90,9 @@ export class EmbyClient {
           const buffer = Buffer.concat(chunks)
           if (image) return { mime, buffer }
           try { return JSON.parse(buffer) } catch { throw new RemoteError('接口未返回有效 JSON') }
-        })
+        }, this.controller.signal)
       } catch (error) {
+        if (this.controller.signal.aborted) throw new RemoteError('应用正在停止', 409)
         const retryable = !(error instanceof RemoteError) || error.status >= 500 || error.status === 429
         if (!retryable || attempt === this.retries) throw error instanceof RemoteError ? error : new RemoteError('连接失败或请求超时')
         let delay = 2000 * (attempt + 1)
@@ -97,7 +102,7 @@ export class EmbyClient {
           if (requested > 60000) throw error
           if (Number.isFinite(requested)) delay = Math.max(delay, requested)
         }
-        await sleep(delay)
+        await sleep(delay, undefined, { signal: this.controller.signal })
       }
     }
   }

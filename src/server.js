@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { Store } from './store.js'
 import { Service } from './service.js'
 import { EmbyClient, RemoteError } from './emby.js'
+import { homeSnapshot } from './home.js'
 
 const deriveKey = promisify(scrypt)
 const SESSION_AGE = 7 * 24 * 3600 * 1000
@@ -33,7 +34,7 @@ async function readBody(request) {
   } catch { throw new RemoteError('请求格式错误', 400) }
 }
 
-export function createApp({ dataDir = process.env.DATA_DIR || './data', client, scheduler = true, cacheMinutes = Number(process.env.CACHE_MINUTES) || 60, secureCookie = process.env.COOKIE_SECURE === 'true' } = {}) {
+export function createApp({ dataDir = process.env.DATA_DIR || './data', client, scheduler = true, desktopKey, cacheMinutes = Number(process.env.CACHE_MINUTES) || 60, secureCookie = process.env.COOKIE_SECURE === 'true' } = {}) {
   const store = new Store(dataDir)
   const service = new Service(store, client || new EmbyClient({
     interval: Math.max(2000, Number(process.env.REQUEST_INTERVAL_MS) || 2000),
@@ -63,6 +64,13 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
     response.setHeader('Cache-Control', 'no-store')
     response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
     try {
+      // 桌面辅助进程额外绑定启动它的客户端；原有管理员与来源校验仍然生效。
+      if (desktopKey) {
+        const provided = request.headers['x-embyscope-desktop'] || ''
+        const expected = Buffer.from(desktopKey)
+        const actual = Buffer.from(provided)
+        if (actual.length !== expected.length || !timingSafeEqual(actual, expected) || request.headers.host !== `127.0.0.1:${server.address().port}`) throw new RemoteError('桌面连接校验失败', 403)
+      }
       const url = new URL(request.url, 'http://localhost')
       const path = url.pathname
       const method = request.method
@@ -131,6 +139,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return send(response, 202, { ok: true })
       }
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))
+      if (path === '/api/home' && method === 'GET') return send(response, 200, homeSnapshot(store, service.selected(url.searchParams.get('server'))))
       if (path === '/api/library' && method === 'GET') return send(response, 200, service.library(url.searchParams))
       const item = path.match(/^\/api\/items\/([a-f0-9-]+)\/([^/]+)(\/(?:poster|resources))?$/)
       if (item && method === 'GET') {
@@ -160,6 +169,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
   return { server, store, service, async close() {
     clearInterval(timer)
     service.stopping = true
+    service.client.close?.()
     await new Promise(resolve => server.close(resolve))
     await service.drain()
     store.close()

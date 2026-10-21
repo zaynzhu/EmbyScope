@@ -93,6 +93,7 @@ export class Service {
     this.store.db.prepare('DELETE FROM servers WHERE id=?').run(id)
   }
   refresh(id, { full = true, automatic = false } = {}) {
+    if (this.stopping) return Promise.resolve()
     if (this.jobs.has(id)) return this.jobs.get(id)
     const row = this.store.server(id)
     if (!row) return Promise.resolve()
