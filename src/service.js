@@ -24,11 +24,11 @@ export class Service {
   settings() {
     return { automaticUpdates: this.store.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get()?.value === 'true' }
   }
-  publicServer(row) {
+  publicServer(row, catalogCache) {
     const { id, name, url, status, error, attemptedAt } = row
     const datasets = {}
     for (const kind of ['catalog', 'views', 'latest', 'resume']) {
-      const cache = this.store.cache(id, kind)
+      const cache = kind === 'catalog' && catalogCache !== undefined ? catalogCache : this.store.cache(id, kind)
       datasets[kind] = {
         available: cache?.data != null, updatedAt: cache?.updatedAt || null, error: cache?.error || null,
         warning: kind === 'catalog' ? this.catalogWarning(cache) : null,
@@ -37,7 +37,7 @@ export class Service {
     }
     const warning = datasets.catalog.warning
     return { id, name, url, lightMinutes: row.lightMinutes, fullHours: row.fullHours, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
-      error: error || warning, attemptedAt, syncing: this.jobs.has(id), catalogProgress: this.catalogProgress.get(id) || null, episodeSync: this.episodeSummary(row), datasets }
+      error: error || warning, attemptedAt, syncing: this.jobs.has(id), catalogProgress: this.catalogProgress.get(id) || null, episodeSync: this.episodeSummary(row, catalogCache), datasets }
   }
   catalogWarning(cache) {
     return cache?.data?.some(item => !['Movie', 'Series', 'Season', 'Episode'].includes(item.type))
@@ -210,9 +210,9 @@ export class Service {
     }
   }
   seasonMode(id) { return this.store.cache(id, 'catalogInfo')?.data?.mode === 'seasons' }
-  episodeSummary(row) {
+  episodeSummary(row, catalogCache) {
     if (!this.seasonMode(row.id)) return null
-    const catalog = this.store.cache(row.id, 'catalog')
+    const catalog = catalogCache === undefined ? this.store.cache(row.id, 'catalog') : catalogCache
     const series = (catalog?.data || []).filter(item => item.type === 'Series')
     const caches = new Map(this.store.db.prepare("SELECT * FROM cache WHERE serverId=? AND kind LIKE 'seasons:%'").all(row.id).map(cache => [cache.kind.slice(8), cache]))
     let completed = 0
@@ -355,23 +355,25 @@ export class Service {
     if (!selected.length) throw new RemoteError('连接不存在', 404)
     return selected
   }
-  collect(rows, kind) {
-    return rows.flatMap(row => (this.store.cache(row.id, kind)?.data || []).map(item => ({ ...item, serverName: row.name, nsfw: !!row.nsfw })))
+  collect(rows, kind, snapshots) {
+    return rows.flatMap(row => ((snapshots ? snapshots.get(row.id) : this.store.cache(row.id, kind))?.data || []).map(item => ({ ...item, serverName: row.name, nsfw: !!row.nsfw })))
   }
   overview(serverId) {
     const rows = this.selected(serverId)
-    const catalog = this.collect(rows, 'catalog')
+    // 仅在本次同步计算内复用，避免统计、分组和状态分别解析整份 JSON。
+    const catalogs = new Map(rows.map(row => [row.id, this.store.cache(row.id, 'catalog')]))
+    const catalog = this.collect(rows, 'catalog', catalogs)
     const works = catalog.filter(item => ['Movie', 'Series'].includes(item.type))
-    const known = rows.filter(row => this.store.cache(row.id, 'catalog')?.data != null).length
+    const known = rows.filter(row => catalogs.get(row.id)?.data != null).length
     const viewsKnown = rows.filter(row => this.store.cache(row.id, 'views')?.data != null).length
     const groups = groupWorks(works)
-    const limitedServers = rows.filter(row => this.catalogWarning(this.store.cache(row.id, 'catalog'))).length
-    const episodeSummaries = rows.map(row => this.episodeSummary(row))
-    const episodesUnknown = rows.some((row, index) => !this.store.cache(row.id, 'catalog')?.data || episodeSummaries[index] && episodeSummaries[index].total === null)
-    const episodeTotal = rows.reduce((sum, row, index) => sum + (episodeSummaries[index]?.total ?? (this.store.cache(row.id, 'catalog')?.data || []).filter(item => item.type === 'Episode').length), 0)
+    const limitedServers = rows.filter(row => this.catalogWarning(catalogs.get(row.id))).length
+    const episodeSummaries = rows.map(row => this.episodeSummary(row, catalogs.get(row.id)))
+    const episodesUnknown = rows.some((row, index) => !catalogs.get(row.id)?.data || episodeSummaries[index] && episodeSummaries[index].total === null)
+    const episodeTotal = rows.reduce((sum, row, index) => sum + (episodeSummaries[index]?.total ?? (catalogs.get(row.id)?.data || []).filter(item => item.type === 'Episode').length), 0)
     const count = type => known ? catalog.filter(item => item.type === type).length : null
     return {
-      servers: rows.map(row => this.publicServer(row)), cacheMinutes: this.cacheMinutes,
+      servers: rows.map(row => this.publicServer(row, catalogs.get(row.id))), cacheMinutes: this.cacheMinutes,
       stats: { movies: count('Movie'), series: count('Series'), episodes: limitedServers || episodesUnknown || !rows.length ? null : episodeTotal,
         libraries: viewsKnown ? this.collect(rows, 'views').length : null,
         entries: known ? works.length : null, uniqueWorks: known ? groups.length : null,
@@ -388,19 +390,20 @@ export class Service {
   }
   library(params) {
     const rows = this.selected(params.get('server'))
-    let items = groupWorks(this.collect(rows, 'catalog').filter(item => ['Movie', 'Series'].includes(item.type)))
+    const catalogs = new Map(rows.map(row => [row.id, this.store.cache(row.id, 'catalog')]))
+    let items = groupWorks(this.collect(rows, 'catalog', catalogs).filter(item => ['Movie', 'Series'].includes(item.type)))
     const query = (params.get('q') || '').trim().toLocaleLowerCase().slice(0, 200)
     const type = params.get('type')
     if (params.get('duplicates') === 'true') items = items.filter(item => item.sources.length > 1)
     items = items.filter(item => (!type || item.type === type) && (!query || item.sources.some(source => source.title.toLocaleLowerCase().includes(query))))
     items.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN') || a.key.localeCompare(b.key))
     const pageSize = Math.min(60, Math.max(1, Number.parseInt(params.get('pageSize')) || 24))
-    const knownServers = rows.filter(row => this.store.cache(row.id, 'catalog')?.data != null).length
+    const knownServers = rows.filter(row => catalogs.get(row.id)?.data != null).length
     const total = knownServers ? items.length : null
     const pages = Math.max(1, Math.ceil((total || 0) / pageSize))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
     return { items: items.slice((page - 1) * pageSize, page * pageSize), total, page, pages, pageSize, knownServers,
-      servers: rows.map(row => this.publicServer(row)) }
+      servers: rows.map(row => this.publicServer(row, catalogs.get(row.id))) }
   }
   findItem(serverId, itemId) {
     if (!this.store.server(serverId)) throw new RemoteError('连接不存在', 404)
