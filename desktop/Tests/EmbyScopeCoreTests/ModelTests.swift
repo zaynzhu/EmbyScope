@@ -24,6 +24,12 @@ struct ModelTests {
     let path = await client.itemPath(item)
     #expect(path == "api/items/server/a%2Fb%3F%E4%B8%AD%E6%96%87")
   }
+  @Test func testPlaceholderMetadataIsHidden() throws {
+    let item = try media(["id": "x", "serverId": "a", "title": "电影", "year": 0, "rating": 0, "type": "Movie"])
+    #expect(item.metadata == "电影")
+    let valid = try media(["id": "x", "serverId": "a", "title": "电影", "year": 2026, "rating": 8.5, "type": "Movie"])
+    #expect(valid.metadata == "2026  ·  电影  ·  8.5 分")
+  }
   @Test func testUnknownDateIsNotFabricated() {
     #expect(displayDate(nil) == "时间未知")
     #expect(displayDate("not-a-date") == "时间未知")

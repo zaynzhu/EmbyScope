@@ -54,3 +54,15 @@ test('退出会取消在途请求和限流队列，不再启动远端请求', as
   assert.equal(calls, 1)
   assert.ok(results.every(result => result.status === 'rejected'))
 })
+
+
+test('兼容接口的0001年占位时间不作为观看记录，继续观看仍保留', () => {
+  const row = { id: 'a', name: 'a', status: 'online', lightMinutes: 60, fullHours: 24 }
+  const store = { cache: () => ({ updatedAt: '2026-10-20T12:00:00Z', data: [
+    { id: 'placeholder', type: 'Series', lastPlayed: '0001-01-01T00:00:00Z' },
+    { id: 'real', type: 'Movie', lastPlayed: '2026-10-19T00:00:00Z' }
+  ] }) }
+  const home = homeSnapshot(store, [row], Date.parse('2026-10-21'))
+  assert.deepEqual(home.recent.map(item => item.id), ['real'])
+  assert.equal(home.resume.length, 2)
+})

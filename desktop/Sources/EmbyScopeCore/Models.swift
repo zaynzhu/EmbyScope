@@ -42,7 +42,7 @@ public struct Media: Codable, Identifiable, Hashable {
     return type == "Series" ? "电视剧" : "电影"
   }
   public var metadata: String {
-    [year.map(String.init), type == "Episode" ? mediaLabel : (type == "Series" ? "电视剧" : "电影"), rating.map { String(format: "%.1f 分", $0) }].compactMap { $0 }.joined(separator: "  ·  ")
+    [year.flatMap { $0 > 0 ? String($0) : nil }, type == "Episode" ? mediaLabel : (type == "Series" ? "电视剧" : "电影"), rating.flatMap { $0 > 0 && $0 <= 10 ? String(format: "%.1f 分", $0) : nil }].compactMap { $0 }.joined(separator: "  ·  ")
   }
 }
 

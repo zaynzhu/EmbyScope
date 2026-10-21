@@ -20,7 +20,7 @@ export function homeSnapshot(store, rows, now = Date.now()) {
     }
     for (const item of records.values()) {
       const time = Date.parse(item.lastPlayed)
-      if (Number.isFinite(time) && time <= now) recent.push(item)
+      if (Number.isFinite(time) && new Date(time).getUTCFullYear() > 1 && time <= now) recent.push(item)
     }
   }
   const order = (a, b) => (Date.parse(b.lastPlayed) || 0) - (Date.parse(a.lastPlayed) || 0) || a.key.localeCompare(b.key)
