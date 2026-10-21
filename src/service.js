@@ -410,13 +410,14 @@ export class Service {
   findItem(serverId, itemId) {
     if (!this.store.server(serverId)) throw new RemoteError('连接不存在', 404)
     for (const kind of ['catalog', 'latest', 'resume']) {
-      const item = this.store.cache(serverId, kind)?.data?.find(item => item.id === itemId)
-      if (item) return item
+      // 海报与详情只取单条，避免每张图片请求都在 JS 中展开整份片库。
+      const item = this.store.db.prepare(`SELECT item.value FROM cache, json_each(cache.data) AS item
+        WHERE cache.serverId=? AND cache.kind=? AND json_extract(item.value,'$.id')=? LIMIT 1`).get(serverId, kind, itemId)
+      if (item) return JSON.parse(item.value)
     }
-    for (const cache of this.store.db.prepare("SELECT data FROM cache WHERE serverId=? AND kind LIKE 'episodes:%'").all(serverId)) {
-      const item = JSON.parse(cache.data)?.find(child => child.id === itemId)
-      if (item) return item
-    }
+    const episode = this.store.db.prepare(`SELECT item.value FROM cache, json_each(cache.data) AS item
+      WHERE cache.serverId=? AND cache.kind LIKE 'episodes:%' AND json_extract(item.value,'$.id')=? LIMIT 1`).get(serverId, itemId)
+    if (episode) return JSON.parse(episode.value)
     throw new RemoteError('条目不存在或当前账号无法访问', 404)
   }
   detail(serverId, itemId, params) {
