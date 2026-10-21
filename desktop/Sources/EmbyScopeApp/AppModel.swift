@@ -41,6 +41,8 @@ final class AppModel {
   var reduceMotion = false
   private var generation = 0
   private var detailGeneration = 0
+  private var libraryGeneration = 0
+  private var episodeGeneration = 0
   private var loadedLibraryKey: String?
   private var started = false
   var scopeName: String { server == "all" ? "全部服务器" : servers.first(where: { $0.id == server })?.name ?? "服务器" }
@@ -118,6 +120,7 @@ final class AppModel {
     } catch { if current == generation { report(error) } }
   }
   func switchServer() async {
+    closeDetail()
     home = nil; overview = nil; library = nil; libraryPage = 1
     selected = nil; detail = nil; revealed = []; revealAll = false
     await loadScope()
@@ -125,14 +128,35 @@ final class AppModel {
   func loadLibrary() async {
     guard let client else { return }
     let current = generation
+    libraryGeneration += 1
+    let request = libraryGeneration
     let params = ["server": server, "q": query, "type": mediaType, "page": String(libraryPage), "pageSize": "24", "duplicates": page == .duplicates ? "true" : "false"]
     let key = params.sorted { $0.key < $1.key }.description
     if loadedLibraryKey == key, library != nil { return }
     do {
       let result: LibraryResponse = try await client.get("api/library", query: params)
-      guard authenticated, current == generation, params["server"] == server, params["q"] == query, params["type"] == mediaType, params["page"] == String(libraryPage), params["duplicates"] == (page == .duplicates ? "true" : "false") else { return }
-      library = result; loadedLibraryKey = key; error = nil
-    } catch { report(error) }
+      guard authenticated, current == generation, request == libraryGeneration, params["server"] == server, params["q"] == query, params["type"] == mediaType, params["page"] == String(libraryPage), params["duplicates"] == (page == .duplicates ? "true" : "false") else { return }
+      library = result
+      libraryPage = result.page
+      var acceptedParams = params
+      acceptedParams["page"] = String(result.page)
+      loadedLibraryKey = acceptedParams.sorted { $0.key < $1.key }.description
+      error = nil
+    } catch { if current == generation, request == libraryGeneration { report(error) } }
+  }
+  func navigate(to destination: Page) {
+    if destination == .duplicates || page == .duplicates {
+      libraryPage = 1; library = nil; loadedLibraryKey = nil
+    }
+    libraryGeneration += 1
+    closeDetail()
+    page = destination
+  }
+  func closeDetail() {
+    detailGeneration += 1
+    episodeGeneration += 1
+    selected = nil; detail = nil; detailError = nil; detailLoading = false
+    resources = [:]; resourceErrors = [:]; resourceLoading = []
   }
   func select(_ item: Media) async {
     guard let client else { return }
@@ -162,12 +186,17 @@ final class AppModel {
   func loadEpisodes(page: Int, season: String = "") async {
     guard let client, let item = selected else { return }
     let request = detailGeneration
+    episodeGeneration += 1
+    let episodeRequest = episodeGeneration
+    detailError = nil
+    detailLoading = true
+    defer { if request == detailGeneration, episodeRequest == episodeGeneration { detailLoading = false } }
     do {
       var parameters = ["page": String(page)]
       if !season.isEmpty { parameters["season"] = season }
       let result: Media = try await client.get(await client.itemPath(item), query: parameters)
-      if request == detailGeneration { detail = result }
-    } catch { if request == detailGeneration { detailError = error.localizedDescription } }
+      if request == detailGeneration, episodeRequest == episodeGeneration { detail = result }
+    } catch { if request == detailGeneration, episodeRequest == episodeGeneration { detailError = error.localizedDescription } }
   }
   func setAutomaticUpdates(_ enabled: Bool) async {
     guard let client else { return }

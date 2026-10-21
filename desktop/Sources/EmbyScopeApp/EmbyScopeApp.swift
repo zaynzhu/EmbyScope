@@ -39,8 +39,11 @@ struct EmbyScopeApp: App {
         CommandGroup(replacing: .newItem) {}
         CommandMenu("导航") {
           ForEach(Array(Page.allCases.enumerated()), id: \.element) { index, page in
-            Button(page.rawValue) { model.page = page }.keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+            Button(page.rawValue) { model.navigate(to: page) }.keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
           }
+          Divider()
+          Button("刷新本地快照") { Task { await model.loadScope() } }
+            .keyboardShortcut("r", modifiers: .command).disabled(!model.authenticated || model.loading)
         }
       }
   }
@@ -107,8 +110,7 @@ private struct RootView: View {
         ForEach(Page.allCases, id: \.self) { page in
           Button {
             withAnimation(app.animation) {
-              if page == .duplicates || app.page == .duplicates { app.libraryPage = 1; app.library = nil }
-              app.page = page; app.selected = nil
+              app.navigate(to: page)
             }
           } label: {
             VStack(spacing: 8) {
@@ -121,6 +123,9 @@ private struct RootView: View {
       }
       Spacer(minLength: 8)
       if app.loading { ProgressView().controlSize(.small) }
+      Button { Task { await app.loadScope() } } label: { Image(systemName: "arrow.clockwise") }
+        .buttonStyle(.plain).disabled(app.loading)
+        .help("刷新本地快照，不触发远端同步（⌘R）").accessibilityLabel("刷新本地快照")
       Button {
         withAnimation(app.animation) { app.revealAll.toggle(); app.revealed = [] }
       } label: { Image(systemName: app.revealAll ? "eye" : "eye.slash") }.buttonStyle(.plain)

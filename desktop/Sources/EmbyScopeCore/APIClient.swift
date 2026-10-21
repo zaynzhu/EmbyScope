@@ -10,10 +10,9 @@ public actor APIClient {
   private let base: URL
   private let key: String
   private let session: URLSession
-  public init(port: Int, key: String) {
+  public init(port: Int, key: String, configuration: URLSessionConfiguration = .ephemeral) {
     base = URL(string: "http://127.0.0.1:\(port)")!
     self.key = key
-    let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 30
     configuration.httpMaximumConnectionsPerHost = 4
     configuration.urlCache = nil

@@ -11,7 +11,7 @@ struct DetailView: View {
       HStack {
         Text("条目详情").font(.headline)
         Spacer()
-        Button { withAnimation(app.animation) { app.selected = nil } } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("关闭详情")
+        Button { withAnimation(app.animation) { app.closeDetail() } } label: { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel("关闭详情")
       }.padding(22)
       Divider().overlay(Theme.line)
       ScrollView {

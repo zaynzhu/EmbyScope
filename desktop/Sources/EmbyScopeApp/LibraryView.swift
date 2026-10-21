@@ -54,7 +54,7 @@ struct OverviewView: View {
           HStack(spacing: 34) {
             metric("各服条目合计", overview.stats.entries)
             metric("去重作品数", overview.stats.uniqueWorks)
-            Button { app.page = .duplicates; app.libraryPage = 1 } label: {
+            Button { app.navigate(to: .duplicates) } label: {
               metric("有多条记录的作品 →", overview.stats.duplicateGroups)
             }.buttonStyle(.plain)
           }

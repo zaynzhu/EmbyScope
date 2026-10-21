@@ -8,6 +8,7 @@ let package = Package(
   targets: [
     .target(name: "EmbyScopeCore"),
     .executableTarget(name: "EmbyScopeApp", dependencies: ["EmbyScopeCore"]),
-    .testTarget(name: "EmbyScopeCoreTests", dependencies: ["EmbyScopeCore"])
+    .testTarget(name: "EmbyScopeCoreTests", dependencies: ["EmbyScopeCore"]),
+    .testTarget(name: "EmbyScopeAppTests", dependencies: ["EmbyScopeApp", "EmbyScopeCore"])
   ]
 )
