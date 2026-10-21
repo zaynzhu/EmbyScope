@@ -29,7 +29,7 @@ test('旧数据库增量迁移标签和周期字段，凭据缓存保留，设�
   assert.equal(store.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get().value, 'false')
   assert.deepEqual(store.decrypt(store.server('fixture-id').secret), { username: 'fixture-user', password: 'fixture-password' })
   assert.equal(store.cache('fixture-id', 'catalog').data.length, 1)
-  store.db.prepare('UPDATE servers SET nsfw=1,lightMinutes=120,fullHours=0,proxyUrl='http://proxy.invalid:19000' WHERE id=?').run('fixture-id')
+  store.db.prepare('UPDATE servers SET nsfw=1,lightMinutes=120,fullHours=0,proxyUrl=? WHERE id=?').run('http://proxy.invalid:19000', 'fixture-id')
   store.close()
   store = new Store(directory)
   assert.equal(store.server('fixture-id').proxyUrl, 'http://proxy.invalid:19000')
