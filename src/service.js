@@ -15,6 +15,7 @@ export class Service {
     this.catalogProgress = new Map()
     this.detailJobs = new Map()
     this.resourceJobs = new Map()
+    this.playbackJobs = new Map()
     this.stopping = false
   }
   updateSettings(body) {
@@ -37,7 +38,7 @@ export class Service {
       }
     }
     const warning = datasets.catalog.warning
-    return { id, name, url, lightMinutes: row.lightMinutes, fullHours: row.fullHours, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
+    return { id, name, url, proxyUrl: row.proxyUrl || null, lightMinutes: row.lightMinutes, fullHours: row.fullHours, nsfw: !!row.nsfw, status: status === 'online' && warning ? 'partial' : status,
       error: error || warning, attemptedAt, syncing: this.jobs.has(id), catalogProgress: this.catalogProgress.get(id) || null, episodeSync: this.episodeSummary(row, catalogCache), datasets }
   }
   catalogWarning(cache) {
@@ -51,7 +52,13 @@ export class Service {
     const url = normalizeUrl(body.url)
     const previous = id ? this.store.server(id) : null
     if (id && !previous) throw new RemoteError('连接不存在', 404)
-    if (this.store.servers().some(row => row.url === url && row.id !== id)) throw new RemoteError('此地址已有连接，请编辑已有连接', 400)
+    const proxyValue = body.proxyUrl === undefined ? previous?.proxyUrl ?? null : body.proxyUrl
+    if (proxyValue !== null && typeof proxyValue !== 'string') throw new RemoteError('反代地址需填写完整 HTTP / HTTPS 地址', 400)
+    const proxyUrl = proxyValue?.trim() ? normalizeUrl(proxyValue.trim()) : null
+    if (proxyUrl === url) throw new RemoteError('原地址与反代地址相同，无需重复填写', 400)
+    if (this.store.servers().some(row => row.id !== id && [row.url, row.proxyUrl].filter(Boolean).some(address => address === url || address === proxyUrl))) {
+      throw new RemoteError('此地址已属于其他连接的原地址或反代地址，请编辑对应连接', 400)
+    }
     if (!previous && this.store.servers().length >= 30) throw new RemoteError('最多保存 30 台服务器', 400)
     if (body.nsfw !== undefined && typeof body.nsfw !== 'boolean') throw new RemoteError('NSFW 标签必须为布尔值', 400)
     const nsfw = body.nsfw === undefined ? !!previous?.nsfw : body.nsfw
@@ -77,7 +84,7 @@ export class Service {
       } else {
         this.store.db.prepare('INSERT INTO servers(id,name,url,secret) VALUES(?,?,?,?)').run(id, body.name.trim(), url, this.store.encrypt(secret))
       }
-      this.store.db.prepare('UPDATE servers SET nsfw=?,lightMinutes=?,fullHours=? WHERE id=?').run(Number(nsfw), lightMinutes, fullHours, id)
+      this.store.db.prepare('UPDATE servers SET nsfw=?,lightMinutes=?,fullHours=?,proxyUrl=? WHERE id=?').run(Number(nsfw), lightMinutes, fullHours, proxyUrl, id)
       this.store.db.exec('COMMIT')
     } catch (error) {
       this.store.db.exec('ROLLBACK')
@@ -479,7 +486,7 @@ export class Service {
     }
   }
   async drain() {
-    await Promise.allSettled([...this.jobs.values(), ...this.images.values(), ...this.detailJobs.values(), ...this.resourceJobs.values()])
+    await Promise.allSettled([...this.jobs.values(), ...this.images.values(), ...this.detailJobs.values(), ...this.resourceJobs.values(), ...this.playbackJobs.values()])
     await Promise.allSettled([...this.seasonJobs.values()])
   }
 }

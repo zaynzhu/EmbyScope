@@ -7,6 +7,7 @@ struct SettingsView: View {
   @State private var showEditor = false
   @State private var deleting: Server?
   @State private var confirmFull = false
+  @State private var proxyTarget: Server?
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 26) {
@@ -32,9 +33,11 @@ struct SettingsView: View {
               if server.nsfw { Text("NSFW").font(.caption.monospaced()).foregroundStyle(Theme.accent) }
               Spacer()
               Text(server.statusLabel).font(.caption).foregroundStyle(Theme.secondary)
+              Button("关联反代") { proxyTarget = server }
               Button("编辑") { editing = server; showEditor = true }.disabled(app.demo || app.offline)
               Button("删除") { deleting = server }.disabled(app.demo || app.offline)
             }
+            if let proxy = server.proxyUrl { Text("关联反代：\(proxy) · 同一服务器连接").font(.caption).foregroundStyle(Theme.secondary).textSelection(.enabled) }
             Text(server.url).font(.caption).foregroundStyle(Theme.secondary).textSelection(.enabled)
             Text("轻量 \(server.lightMinutes) 分钟 · 完整校准 \(server.fullHours == 0 ? "关闭" : "每 \(server.fullHours) 小时")\(app.automaticUpdates ? "" : " · 总开关已暂停")")
               .font(.caption).foregroundStyle(Theme.secondary)
@@ -46,6 +49,7 @@ struct SettingsView: View {
         Text("当前界面不播放视频、不代理流媒体、不修改远端文件。最近观看仅来自账号最后播放时间，尚未接入完整历史。").font(.caption).foregroundStyle(Theme.secondary)
       }.padding(30).frame(maxWidth: 1050).frame(maxWidth: .infinity)
     }
+    .sheet(item: $proxyTarget) { ProxyEditor(server: $0) }
     .sheet(isPresented: $showEditor) { ServerEditor(server: editing) }
     .alert("删除这个连接？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
       Button("取消", role: .cancel) { deleting = nil }
@@ -104,5 +108,38 @@ private struct ServerEditor: View {
       }
     }.padding(30).frame(width: 510).background(Theme.background)
     .onAppear { if let server { name = server.name; address = server.url; nsfw = server.nsfw; minutes = server.lightMinutes; hours = server.fullHours } }
+  }
+}
+
+
+private struct ProxyEditor: View {
+  @Environment(AppModel.self) private var app
+  @Environment(\.dismiss) private var dismiss
+  let server: Server
+  @State private var address = ""
+  @State private var saving = false
+  @State private var error: String?
+  var body: some View {
+    VStack(alignment: .leading, spacing: 18) {
+      Text("关联反代 · \(server.name)").font(.title2.bold())
+      Text("原服务：\(server.url)").font(.caption).foregroundStyle(Theme.secondary)
+      TextField("反代完整地址", text: $address, prompt: Text("http://代理主机:端口"))
+      Text("这是当前服务器的附属地址，共用片库与统计。留空移除关联；保存不会访问该地址或修改 TTD 配置。").font(.caption).foregroundStyle(Theme.secondary)
+      Text("仅保存地址不会取得 TTD 日志。日志还需要管理入口授权与可靠的规则匹配，当前尚未接入。").font(.caption).foregroundStyle(Theme.secondary)
+      if let error { Text(error).font(.caption).foregroundStyle(Theme.accent) }
+      HStack {
+        Spacer()
+        Button("取消") { dismiss() }.disabled(saving)
+        Button("保存关联") {
+          saving = true
+          Task {
+            do { try await app.saveProxy(server, url: address); dismiss() }
+            catch { self.error = error.localizedDescription }
+            saving = false
+          }
+        }.buttonStyle(GoldButton()).disabled(saving)
+      }
+    }.padding(30).frame(width: 510).background(Theme.background)
+      .onAppear { address = server.proxyUrl ?? "" }
   }
 }

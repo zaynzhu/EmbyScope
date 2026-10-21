@@ -43,6 +43,7 @@ struct HomeView: View {
               Label("演示数据 · 虚构作品与原创封面 · 未连接 NAS", systemImage: "testtube.2")
                 .font(.caption).foregroundStyle(Theme.accent)
             }
+            if let playback = home.playback { PlaybackView(snapshot: playback) }
             VStack(alignment: .leading, spacing: 18) {
               SectionTitle(title: "还没看完的故事", subtitle: "当前账号的继续观看 · 这里只展示信息，不提供播放")
               if home.resume.isEmpty {

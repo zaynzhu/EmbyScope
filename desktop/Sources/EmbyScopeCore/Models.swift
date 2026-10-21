@@ -64,6 +64,7 @@ public struct Server: Codable, Identifiable, Hashable {
   public let id: String
   public let name: String
   public let url: String
+  public let proxyUrl: String?
   public let status: String
   public let error: String?
   public let nsfw: Bool
@@ -76,7 +77,43 @@ public struct Server: Codable, Identifiable, Hashable {
     return ["online": "在线", "partial": "部分可用", "offline": "离线缓存", "denied": "访问受限", "pending": "等待连接", "error": "连接异常"][status] ?? "状态未知"
   }
 }
+public struct PlaybackResponse: Decodable {
+  public struct Session: Decodable, Identifiable {
+    public let id: String
+    public let itemId: String
+    public let title: String
+    public let client: String?
+    public let device: String?
+    public let state: String
+    public let positionTicks: Double?
+    public let runtimeTicks: Double?
+  }
+  public struct Source: Decodable {
+    public let serverId: String
+    public let serverName: String
+    public let nsfw: Bool
+    public let available: Bool
+    public let stale: Bool
+    public let checkedAt: String?
+    public let error: String?
+    public let sessions: [Session]
+    public func isFresh(at now: Date) -> Bool {
+      guard !stale, let checkedAt, let date = ISO8601DateFormatter.withMilliseconds.date(from: checkedAt) else { return false }
+      return now.timeIntervalSince(date) >= 0 && now.timeIntervalSince(date) <= 60
+    }
+  }
+  public let servers: [Source]
+}
+private extension ISO8601DateFormatter {
+  static var withMilliseconds: ISO8601DateFormatter {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }
+}
 public struct HomeResponse: Decodable {
+  public let playback: PlaybackResponse?
+
   public struct Source: Decodable { public let serverId: String; public let serverName: String; public let kind: String; public let updatedAt: String?; public let error: String?; public let available: Bool; public let stale: Bool }
   public let recent: [Media]
   public let resume: [Media]

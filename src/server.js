@@ -1,3 +1,4 @@
+import { playbackSnapshot, refreshPlayback } from './playback.js'
 import http from 'node:http'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -123,6 +124,15 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         response.setHeader('Set-Cookie', cookie('', 0))
         return send(response, 200, { ok: true })
       }
+      const proxy = path.match(/^\/api\/servers\/([a-f0-9-]+)\/proxy$/)
+      if (proxy && method === 'PUT') {
+        const row = store.server(proxy[1])
+        if (!row) throw new RemoteError('连接不存在', 404)
+        const body = await readBody(request)
+        if (!Object.hasOwn(body, 'proxyUrl')) throw new RemoteError('缺少反代地址字段', 400)
+        // 独立的本地关联操作：忽略其他输入，离线时也不触发登录或同步。
+        return send(response, 200, service.saveServer({ name: row.name, url: row.url, proxyUrl: body.proxyUrl }, row.id))
+      }
       if (offline && method !== 'GET') throw new RemoteError('离线预览只读取本地缓存，请退出离线模式后修改配置或更新', 409)
       if (path === '/api/servers' && method === 'GET') return send(response, 200, service.listServers())
       if (path === '/api/settings' && method === 'GET') return send(response, 200, service.settings())
@@ -139,8 +149,13 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         for (const row of service.selected(body.server)) service.refresh(row.id, { full: body.mode === 'full' })
         return send(response, 202, { ok: true })
       }
+      if (path === '/api/playback/refresh' && method === 'POST') {
+        const body = await readBody(request)
+        await Promise.all(service.selected(body.server).map(row => refreshPlayback(service, row)))
+        return send(response, 200, { ok: true })
+      }
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))
-      if (path === '/api/home' && method === 'GET') return send(response, 200, homeSnapshot(store, service.selected(url.searchParams.get('server'))))
+      if (path === '/api/home' && method === 'GET') return send(response, 200, { ...homeSnapshot(store, service.selected(url.searchParams.get('server'))), playback: playbackSnapshot(store, service.selected(url.searchParams.get('server')), offline) })
       if (path === '/api/library' && method === 'GET') return send(response, 200, service.library(url.searchParams))
       const item = path.match(/^\/api\/items\/([a-f0-9-]+)\/([^/]+)(\/(?:poster|resources))?$/)
       if (item && method === 'GET') {

@@ -46,6 +46,9 @@ export class Store {
         this.db.exec(`ALTER TABLE servers ADD COLUMN ${name} INTEGER NOT NULL DEFAULT ${value}`)
       }
     }
+    if (!this.db.prepare('PRAGMA table_info(servers)').all().some(column => column.name === 'proxyUrl')) {
+      this.db.exec('ALTER TABLE servers ADD COLUMN proxyUrl TEXT')
+    }
     if (!this.db.prepare('PRAGMA table_info(servers)').all().some(column => column.name === 'nsfw')) {
       this.db.exec('ALTER TABLE servers ADD COLUMN nsfw INTEGER NOT NULL DEFAULT 0')
     }

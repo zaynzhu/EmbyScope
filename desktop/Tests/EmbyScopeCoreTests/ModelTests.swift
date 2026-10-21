@@ -30,6 +30,16 @@ struct ModelTests {
     let valid = try media(["id": "x", "serverId": "a", "title": "电影", "year": 2026, "rating": 8.5, "type": "Movie"])
     #expect(valid.metadata == "2026  ·  电影  ·  8.5 分")
   }
+  @Test func testPlaybackSnapshotExpiresAndAcceptsMissingProxy() throws {
+    let now = Date(timeIntervalSince1970: 1792560000)
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let data: [String: Any] = ["serverId": "a", "serverName": "甲", "nsfw": false, "available": true, "stale": false, "checkedAt": formatter.string(from: now), "sessions": []]
+    let source = try JSONDecoder().decode(PlaybackResponse.Source.self, from: JSONSerialization.data(withJSONObject: data))
+    #expect(source.isFresh(at: now.addingTimeInterval(30)))
+    #expect(!source.isFresh(at: now.addingTimeInterval(61)))
+    #expect(!source.isFresh(at: now.addingTimeInterval(-1)))
+  }
   @Test func testUnknownDateIsNotFabricated() {
     #expect(displayDate(nil) == "时间未知")
     #expect(displayDate("not-a-date") == "时间未知")

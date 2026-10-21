@@ -93,6 +93,15 @@ test('离线HTTP仍需管理员认证，阻止配置与刷新；备份恢复可�
   for (const [path, method, body] of [['/api/settings', 'PUT', { automaticUpdates: true }], ['/api/refresh', 'POST', { mode: 'full' }], ['/api/servers', 'POST', {}]]) {
     assert.equal((await fetch(base + path, { method, headers, body: JSON.stringify(body) })).status, 409)
   }
+  const row = app.store.servers()[0]
+  const before = app.store.cache(row.id, 'catalog')
+  const proxyResponse = await fetch(base + `/api/servers/${row.id}/proxy`, { method: 'PUT', headers, body: JSON.stringify({ proxyUrl: 'http://proxy.invalid:19000', url: 'http://evil.invalid', password: 'ignored' }) })
+  assert.equal(proxyResponse.status, 200)
+  assert.equal(app.store.server(row.id).url, row.url)
+  assert.equal(app.store.server(row.id).proxyUrl, 'http://proxy.invalid:19000')
+  assert.deepEqual(app.store.decrypt(app.store.server(row.id).secret), app.store.decrypt(row.secret))
+  assert.deepEqual(app.store.cache(row.id, 'catalog'), before)
+  assert.equal((await fetch(base + '/api/playback/refresh', { method: 'POST', headers, body: '{}' })).status, 409)
   const backup = join(root, 'backup')
   await copyDataDirectory(source, backup)
   await copyDataDirectory(backup, join(root, 'restored'), { offlinePreview: true })

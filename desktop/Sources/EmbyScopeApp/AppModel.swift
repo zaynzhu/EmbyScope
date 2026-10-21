@@ -27,6 +27,7 @@ final class AppModel {
   var library: LibraryResponse?
   var automaticUpdates = false
   var offline = false
+  var playbackLoading = false
   var query = ""
   var mediaType = ""
   var libraryPage = 1
@@ -210,6 +211,22 @@ final class AppModel {
       let _: OK = try await client.send("api/refresh", fields: ["server": server, "mode": full ? "full" : "light"])
       await loadScope()
     } catch { report(error) }
+  }
+  func refreshPlayback() async {
+    guard let client, !offline, !demo, !playbackLoading else { return }
+    playbackLoading = true
+    let current = generation
+    let scope = server
+    defer { playbackLoading = false }
+    do {
+      let _: OK = try await client.send("api/playback/refresh", fields: ["server": scope])
+      if current == generation, authenticated { await loadScope() }
+    } catch { if current == generation { report(error) } }
+  }
+  func saveProxy(_ target: Server, url: String) async throws {
+    guard let client else { return }
+    let _: Server = try await client.send("api/servers/\(target.id)/proxy", method: "PUT", fields: ["proxyUrl": url])
+    await loadScope()
   }
   func saveServer(id: String?, fields: [String: Any]) async throws {
     guard let client else { return }

@@ -24,6 +24,9 @@ export function seedDemo(store, artwork) {
       RunTimeTicks: 72000000000,
       UserData: index < 8 ? { LastPlayedDate: new Date(now - (index * 25 + serverIndex * 3 + 2) * 3600000).toISOString(), PlaybackPositionTicks: index < 4 ? (28 + index * 12) * 600000000 : null } : {}
     }, id))
+    store.db.prepare('UPDATE servers SET proxyUrl=? WHERE id=?').run(`https://demo-proxy-${serverIndex}.invalid`, id)
+    store.saveCache(id, 'playback', serverIndex ? null : [{ id: 'demo-session', itemId: '0', title: '潮汐之后', client: '演示客户端', device: 'Mac', state: 'playing', positionTicks: 16800000000, runtimeTicks: 72000000000 }])
+    if (serverIndex) store.db.prepare("UPDATE cache SET error='模拟：此服务的播放会话接口不可用' WHERE serverId=? AND kind='playback'").run(id)
     store.saveCache(id, 'catalog', items)
     store.saveCache(id, 'views', [{ id: 'demo-library', serverId: id, name: '电影与剧集', type: 'mixed' }])
     store.saveCache(id, 'latest', items.slice(0, 12))
