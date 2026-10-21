@@ -4,6 +4,16 @@
 
 界面参考 TTD 的媒体概览信息顺序：统计卡片 → 媒体库 → 最近入库 → 继续观看，并增加服务器切换、来源标注、跨服去重和缓存状态。没有读取或复制 TTD 凭据，没有改动 TTD 配置。
 
+## macOS 原生预览版
+
+新增 SwiftUI 原生界面：以「此刻」首页展示账号最近观看和继续观看，原概览在第二页；另有片库、同作品记录对照、资源路径及服务器设置。复用 Node 业务内核和 SQLite，应用自带运行时，网页版继续保留。
+
+在 Mac 上运行 `scripts/build-macos-app.sh` 构建，再用 `open dist/EmbyScope.app --args --demo` 打开隔离演示。普通双击启动使用独立配置目录，不自动导入网页版数据。当前为本机架构、临时签名的开发预览，尚未制作 DMG 或公证。
+
+参见 [桌面版使用说明](docs/macOS使用说明.md) 和 [桌面版验收记录](docs/macOS验收记录.md)。
+
+![macOS 原生首页，虚构演示数据](docs/images/macos-home.png)
+
 ## 功能与范围
 
 - 首次打开设置管理员密码；无注册、多用户或权限管理。
@@ -106,6 +116,8 @@ src/emby.js        限速、超时、重试与 Emby 请求
 src/service.js     连接、同步、缓存、统计与海报
 src/identity.js    数据白名单和保守去重
 src/resources.js   资源路径白名单与敏感地址过滤
+src/home.js        基于缓存的账号观看快照
+desktop/          SwiftUI 原生界面、桌面内核入口与模拟数据
 public/           中文响应式界面
 test/             模拟 Emby 与自动化测试
 scripts/          演示、云端打包、容器验收

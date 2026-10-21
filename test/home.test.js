@@ -26,7 +26,10 @@ test('桌面启动密钥不替代管理员认证，动态端口仍校验请求�
   const dir = mkdtempSync(join(tmpdir(), 'embyscope-desktop-test-'))
   const app = createApp({ dataDir: dir, scheduler: false, desktopKey: 'a'.repeat(64) })
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve))
-  t.after(async () => { await app.close(); rmSync(dir, { recursive: true, force: true }) })
+  t.after(async () => {
+    await app.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
   const base = `http://127.0.0.1:${app.server.address().port}`
   assert.equal((await fetch(base + '/health')).status, 403)
   const headers = { 'X-EmbyScope-Desktop': 'a'.repeat(64), 'X-EmbyScope': '1', 'Content-Type': 'application/json' }

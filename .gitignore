@@ -6,3 +6,5 @@ dist/
 *.log
 .DS_Store
 test-output/
+desktop/.build/
+desktop/.swiftpm/
