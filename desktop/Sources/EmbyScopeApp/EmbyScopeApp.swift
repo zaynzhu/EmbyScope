@@ -32,7 +32,7 @@ struct EmbyScopeApp: App {
   var body: some Scene {
     Window("映览 · EmbyScope", id: "main") {
       RootView().environment(model).frame(minWidth: 1000, minHeight: 700)
-        .preferredColorScheme(.dark).tint(Theme.accent)
+        .preferredColorScheme(.light).tint(Theme.accent)
         .task { delegate.model = model; await model.start() }
     }.defaultSize(width: 1220, height: 860)
       .commands {
@@ -93,7 +93,7 @@ private struct RootView: View {
         }
         .animation(app.animation, value: app.selected?.key)
       }
-    }.background(Theme.background).foregroundStyle(.white.opacity(0.94))
+    }.background(Theme.background).foregroundStyle(Theme.text)
       .onChange(of: systemReduceMotion, initial: true) { _, value in if value { app.reduceMotion = true } }
   }
   private var header: some View {
@@ -115,7 +115,7 @@ private struct RootView: View {
           } label: {
             VStack(spacing: 8) {
               Text(page.rawValue).font(.system(size: 12, weight: app.page == page ? .semibold : .regular))
-                .foregroundStyle(app.page == page ? .white : Theme.secondary)
+                .foregroundStyle(app.page == page ? Theme.text : Theme.secondary)
               Capsule().fill(app.page == page ? Theme.accent : .clear).frame(width: 18, height: 2)
             }.padding(.top, 10)
           }.buttonStyle(.plain)

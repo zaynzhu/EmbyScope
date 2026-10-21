@@ -4,11 +4,13 @@ import ImageIO
 import EmbyScopeCore
 
 enum Theme {
-  static let background = Color(red: 0.055, green: 0.059, blue: 0.068)
-  static let surface = Color(red: 0.090, green: 0.094, blue: 0.105)
-  static let line = Color.white.opacity(0.09)
-  static let accent = Color(red: 0.85, green: 0.65, blue: 0.32)
-  static let secondary = Color.white.opacity(0.65)
+  static let background = Color(red: 0.965, green: 0.957, blue: 0.937)
+  static let surface = Color(red: 0.995, green: 0.990, blue: 0.978)
+  static let text = Color(red: 0.17, green: 0.18, blue: 0.17)
+  static let line = text.opacity(0.10)
+  static let accent = Color(red: 0.56, green: 0.34, blue: 0.13)
+  static let gold = Color(red: 0.90, green: 0.72, blue: 0.40)
+  static let secondary = Color(red: 0.40, green: 0.41, blue: 0.38)
 }
 
 @MainActor
@@ -86,7 +88,7 @@ struct PosterView: View {
 struct GoldButton: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.font(.system(size: 12, weight: .semibold)).padding(.horizontal, 16).padding(.vertical, 10)
-      .foregroundStyle(Color.black.opacity(0.87)).background(Theme.accent.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 8))
+      .foregroundStyle(Theme.text).background(Theme.gold.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 8))
   }
 }
 
