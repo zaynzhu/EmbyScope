@@ -13,17 +13,17 @@ struct SettingsView: View {
         SectionTitle(title: "服务器与更新", subtitle: "凭据加密存于本机，远端媒体库只读。")
         if app.demo { Text("当前为隔离演示模式。退出后正常打开应用，才能配置你的服务器。").font(.callout).foregroundStyle(Theme.accent) }
         VStack(alignment: .leading, spacing: 16) {
-          Toggle("自动更新", isOn: Binding(get: { app.automaticUpdates }, set: { enabled in Task { await app.setAutomaticUpdates(enabled) } })).toggleStyle(.switch).disabled(app.demo)
-          Text(app.automaticUpdates ? "按各服务器周期更新，窗口失焦不会触发额外刷新。" : "已暂停。打开应用、切页和切换服务器只读取缓存；详情与海报可能按需请求。")
+          Toggle("自动更新", isOn: Binding(get: { app.automaticUpdates }, set: { enabled in Task { await app.setAutomaticUpdates(enabled) } })).toggleStyle(.switch).disabled(app.demo || app.offline)
+          Text(app.offline ? "离线预览中，更新与连接修改已禁用；详情和海报仅从本机缓存读取。" : app.automaticUpdates ? "按各服务器周期更新，窗口失焦不会触发额外刷新。" : "已暂停。打开应用、切页和切换服务器只读取缓存；详情与海报可能按需请求。")
             .font(.caption).foregroundStyle(Theme.secondary)
           HStack {
-            Button("轻量更新当前范围") { Task { await app.refresh(full: false) } }.disabled(app.demo)
-            Button("完整校准当前范围…") { confirmFull = true }.disabled(app.demo)
+            Button("轻量更新当前范围") { Task { await app.refresh(full: false) } }.disabled(app.demo || app.offline)
+            Button("完整校准当前范围…") { confirmFull = true }.disabled(app.demo || app.offline)
             Button("重新读取本地状态") { Task { await app.loadScope() } }
           }
           Text("轻量更新读取媒体库、最近入库和继续观看；完整校准会分页读取片库。所有远端请求限速，同服务间隔至少两秒。").font(.caption).foregroundStyle(Theme.secondary)
         }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
-        HStack { Text("已连接的服务器").font(.title3.weight(.semibold)); Spacer(); Button("添加服务器") { editing = nil; showEditor = true }.buttonStyle(GoldButton()).disabled(app.demo) }
+        HStack { Text("已连接的服务器").font(.title3.weight(.semibold)); Spacer(); Button("添加服务器") { editing = nil; showEditor = true }.buttonStyle(GoldButton()).disabled(app.demo || app.offline) }
         ForEach(app.servers) { server in
           VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -32,8 +32,8 @@ struct SettingsView: View {
               if server.nsfw { Text("NSFW").font(.caption.monospaced()).foregroundStyle(Theme.accent) }
               Spacer()
               Text(server.statusLabel).font(.caption).foregroundStyle(Theme.secondary)
-              Button("编辑") { editing = server; showEditor = true }.disabled(app.demo)
-              Button("删除") { deleting = server }.disabled(app.demo)
+              Button("编辑") { editing = server; showEditor = true }.disabled(app.demo || app.offline)
+              Button("删除") { deleting = server }.disabled(app.demo || app.offline)
             }
             Text(server.url).font(.caption).foregroundStyle(Theme.secondary).textSelection(.enabled)
             Text("轻量 \(server.lightMinutes) 分钟 · 完整校准 \(server.fullHours == 0 ? "关闭" : "每 \(server.fullHours) 小时")\(app.automaticUpdates ? "" : " · 总开关已暂停")")

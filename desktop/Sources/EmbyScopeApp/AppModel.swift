@@ -26,6 +26,7 @@ final class AppModel {
   var overview: OverviewResponse?
   var library: LibraryResponse?
   var automaticUpdates = false
+  var offline = false
   var query = ""
   var mediaType = ""
   var libraryPage = 1
@@ -114,6 +115,7 @@ final class AppModel {
       let stats: OverviewResponse = try await client.get("api/overview", query: ["server": scope])
       guard current == generation else { return }
       servers = updatedServers; automaticUpdates = settings.automaticUpdates
+      offline = settings.offline == true
       home = snapshot; overview = stats; error = nil
       loadedLibraryKey = nil
       if page == .library || page == .duplicates { await loadLibrary() }

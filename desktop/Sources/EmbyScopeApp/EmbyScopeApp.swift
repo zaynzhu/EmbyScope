@@ -73,6 +73,11 @@ private struct RootView: View {
       } else {
         header
         Rectangle().fill(Theme.line).frame(height: 1)
+        if app.offline {
+          Label("离线预览 · 仅显示本机缓存，详情和海报也不会联网", systemImage: "wifi.slash")
+            .font(.caption).foregroundStyle(Theme.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30).padding(.vertical, 10)
+        }
         if let error = app.error {
           HStack { Image(systemName: "exclamationmark.circle"); Text(error).font(.caption); Spacer(); Button("关闭提示") { app.error = nil } }
             .foregroundStyle(Theme.accent).padding(12).background(Theme.surface)

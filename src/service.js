@@ -4,10 +4,11 @@ import { normalizeItem, groupWorks } from './identity.js'
 import { normalizeUrl, RemoteError } from './emby.js'
 
 export class Service {
-  constructor(store, client, { cacheMinutes = 60 } = {}) {
+  constructor(store, client, { cacheMinutes = 60, offline = false } = {}) {
     this.store = store
     this.client = client
     this.cacheMinutes = cacheMinutes
+    this.offline = offline
     this.jobs = new Map()
     this.images = new Map()
     this.seasonJobs = new Map()
@@ -22,7 +23,7 @@ export class Service {
     return this.settings()
   }
   settings() {
-    return { automaticUpdates: this.store.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get()?.value === 'true' }
+    return { automaticUpdates: !this.offline && this.store.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get()?.value === 'true', offline: this.offline }
   }
   publicServer(row, catalogCache) {
     const { id, name, url, status, error, attemptedAt } = row
@@ -93,7 +94,7 @@ export class Service {
     this.store.db.prepare('DELETE FROM servers WHERE id=?').run(id)
   }
   refresh(id, { full = true, automatic = false } = {}) {
-    if (this.stopping) return Promise.resolve()
+    if (this.stopping || this.offline) return Promise.resolve()
     if (this.jobs.has(id)) return this.jobs.get(id)
     const row = this.store.server(id)
     if (!row) return Promise.resolve()
@@ -280,6 +281,7 @@ export class Service {
     this.seasonJobs.set(row.id, job)
   }
   async readDetail(serverId, itemId, params) {
+    if (this.offline) return this.detail(serverId, itemId, params)
     const item = this.findItem(serverId, itemId)
     await this.readResources(serverId, itemId)
     const seriesId = item.type === 'Series' ? item.id : item.seriesId
@@ -318,7 +320,7 @@ export class Service {
     const cached = this.store.cache(serverId, kind)
     const attempt = this.store.cache(serverId, `resourceAttempt:${itemId}`)?.data?.at || 0
     const key = `${serverId}:${row.revision}:${itemId}`
-    if ((!cached?.data || cached.data.version !== RESOURCE_CACHE_VERSION || Date.now() - Date.parse(cached.updatedAt) > 86400000) && Date.now() - attempt > 60000) {
+    if (!this.offline && (!cached?.data || cached.data.version !== RESOURCE_CACHE_VERSION || Date.now() - Date.parse(cached.updatedAt) > 86400000) && Date.now() - attempt > 60000) {
       if (!this.resourceJobs.has(key)) {
         const job = (async () => {
           try {
@@ -345,7 +347,7 @@ export class Service {
     }
     const result = this.store.cache(serverId, kind)
     return { locations: result?.data?.locations || [], hiddenRemote: result?.data?.hiddenRemote || false,
-      error: result?.error || null, updatedAt: result?.updatedAt || null,
+      error: result?.error || (this.offline && !result?.data ? '离线预览中尚无位置缓存' : null), updatedAt: result?.updatedAt || null,
       stale: !!result?.data && (!!result.error || Date.now() - Date.parse(result.updatedAt) > 86400000) }
   }
   selected(serverId) {
@@ -446,6 +448,7 @@ export class Service {
     const row = this.store.server(serverId)
     const cached = this.store.db.prepare('SELECT * FROM images WHERE serverId=? AND itemId=? AND tag=?').get(serverId, itemId, item.imageTag)
     if (cached) return { mime: cached.mime, buffer: Buffer.from(cached.data) }
+    if (this.offline) throw new RemoteError('离线预览中尚无海报缓存', 503)
     if (!['online', 'partial'].includes(row.status)) throw new RemoteError('服务器尚未就绪，海报暂不可用', 503)
     const key = `${serverId}:${row.revision}:${itemId}:${item.imageTag}`
     if (this.images.has(key)) return this.images.get(key)
