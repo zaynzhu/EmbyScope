@@ -2,6 +2,7 @@ import { resourceLocations, RESOURCE_CACHE_VERSION } from './resources.js'
 import { randomUUID } from 'node:crypto'
 import { normalizeItem, groupWorks } from './identity.js'
 import { normalizeUrl, RemoteError } from './emby.js'
+import { comparisonGroups, matchesReview } from './comparison.js'
 
 export class Service {
   constructor(store, client, { cacheMinutes = 60, offline = false } = {}) {
@@ -367,6 +368,17 @@ export class Service {
   collect(rows, kind, snapshots) {
     return rows.flatMap(row => ((snapshots ? snapshots.get(row.id) : this.store.cache(row.id, kind))?.data || []).map(item => ({ ...item, serverName: row.name, nsfw: !!row.nsfw })))
   }
+  comparisons(rows, catalogs) {
+    const catalog = this.collect(rows, 'catalog', catalogs)
+    const children = catalog.filter(item => ['Season', 'Episode'].includes(item.type))
+    for (const row of rows) {
+      const cached = this.store.db.prepare("SELECT kind,data FROM cache WHERE serverId=? AND (kind LIKE 'seasons:%' OR kind LIKE 'episodes:%') AND error IS NULL").all(row.id)
+      for (const cache of cached) {
+        for (const item of JSON.parse(cache.data) || []) children.push({ ...item, serverId: row.id, seriesId: item.seriesId || cache.kind.slice(cache.kind.indexOf(':') + 1) })
+      }
+    }
+    return comparisonGroups(catalog.filter(item => ['Movie', 'Series'].includes(item.type)), children)
+  }
   overview(serverId) {
     const rows = this.selected(serverId)
     // 仅在本次同步计算内复用，避免统计、分组和状态分别解析整份 JSON。
@@ -400,10 +412,11 @@ export class Service {
   library(params) {
     const rows = this.selected(params.get('server'))
     const catalogs = new Map(rows.map(row => [row.id, this.store.cache(row.id, 'catalog')]))
-    let items = groupWorks(this.collect(rows, 'catalog', catalogs).filter(item => ['Movie', 'Series'].includes(item.type)))
+    const reviewing = params.get('duplicates') === 'true'
+    let items = reviewing ? this.comparisons(rows, catalogs).filter(group => matchesReview(group, params.get('review') || 'issues'))
+      : groupWorks(this.collect(rows, 'catalog', catalogs).filter(item => ['Movie', 'Series'].includes(item.type)))
     const query = (params.get('q') || '').trim().toLocaleLowerCase().slice(0, 200)
     const type = params.get('type')
-    if (params.get('duplicates') === 'true') items = items.filter(item => item.sources.length > 1)
     items = items.filter(item => (!type || item.type === type) && (!query || item.sources.some(source => source.title.toLocaleLowerCase().includes(query))))
     items.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN') || a.key.localeCompare(b.key))
     const pageSize = Math.min(60, Math.max(1, Number.parseInt(params.get('pageSize')) || 24))
@@ -441,10 +454,15 @@ export class Service {
     const total = episodes.length
     const pages = Math.max(1, Math.ceil(total / 50))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
-    const group = groupWorks(this.collect(this.store.servers(), 'catalog').filter(child => ['Movie', 'Series'].includes(child.type))).find(group => group.sources.some(source => source.serverId === serverId && source.id === itemId))
+    const group = this.comparisons(this.store.servers()).find(group => group.sources.some(source => source.serverId === serverId && source.id === itemId))
+    const sources = (group?.sources || [item]).map(source => {
+      const cache = this.store.cache(source.serverId, `resources:${source.id}`)
+      return { ...source, resources: { locations: cache?.data?.locations || [], hiddenRemote: cache?.data?.hiddenRemote || false,
+        error: cache?.error || null, updatedAt: cache?.updatedAt || null, stale: !!cache?.data && (!!cache.error || Date.now() - Date.parse(cache.updatedAt) > 86400000) } }
+    })
     const resource = this.store.cache(serverId, `resources:${itemId}`)
     return { ...item, resources: { locations: resource?.data?.locations || [], hiddenRemote: resource?.data?.hiddenRemote || false, error: resource?.error || null, updatedAt: resource?.updatedAt || null, stale: !!resource?.data && (!!resource.error || Date.now() - Date.parse(resource.updatedAt) > 86400000) },
-      duplicateSources: group?.sources || [item], duplicateConflict: group?.conflict || false, serverName: this.store.server(serverId).name, nsfw: !!this.store.server(serverId).nsfw, seasons,
+      duplicateSources: sources, comparison: group?.comparison || null, duplicateConflict: group?.conflict || false, serverName: this.store.server(serverId).name, nsfw: !!this.store.server(serverId).nsfw, seasons,
       episodes: episodes.slice((page - 1) * 50, page * 50), episodeTotal: compatible ? (episodeCache?.data ? total : null) : catalog?.data && !this.catalogWarning(catalog) ? total : null,
       episodeError: episodeCache?.error || null, episodeUpdatedAt: (compatible ? episodeCache?.updatedAt : catalog?.updatedAt) || null,
       seasonEpisodeTotal: seasonCache?.data ? seasonCache.data.filter(season => !params.has('season') || season.episode === Number(params.get('season'))).reduce((sum, season) => sum + season.episodeCount, 0) : null,

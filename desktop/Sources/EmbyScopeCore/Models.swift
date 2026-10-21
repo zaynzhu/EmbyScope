@@ -24,6 +24,8 @@ public struct Media: Codable, Identifiable, Hashable {
   public let conflict: Bool?
   public let duplicateSources: [Media]?
   public let duplicateConflict: Bool?
+  public let comparison: Comparison?
+  public let scope: MediaScope?
   public let resources: Resources?
   public let episodes: [Media]?
   public let seasons: [Int]?
@@ -45,6 +47,22 @@ public struct Media: Codable, Identifiable, Hashable {
     [year.flatMap { $0 > 0 ? String($0) : nil }, type == "Episode" ? mediaLabel : (type == "Series" ? "电视剧" : "电影"), rating.flatMap { $0 > 0 && $0 <= 10 ? String(format: "%.1f 分", $0) : nil }].compactMap { $0 }.joined(separator: "  ·  ")
   }
 }
+public struct MediaScope: Codable, Hashable {
+  public let seasons: [Int]
+  public let origin: String
+  public let label: String
+  public let mismatch: Bool
+}
+public struct Comparison: Codable, Hashable {
+  public struct Counts: Codable, Hashable { public let candidate: Int; public let distinct: Int; public let unknown: Int }
+  public struct Pair: Codable, Hashable { public let leftKey: String; public let rightKey: String; public let kind: String; public let reason: String }
+  public let label: String
+  public let reasons: [String]
+  public let counts: Counts
+  public let hasMetadata: Bool
+  public let pairs: [Pair]
+  public let truncated: Bool
+}
 
 public struct Resources: Codable, Hashable {
   public struct Location: Codable, Hashable { public let path: String; public let label: String }
@@ -59,6 +77,19 @@ public struct Dataset: Codable, Hashable {
   public let updatedAt: String?
   public let error: String?
   public let stale: Bool
+}
+
+public func resourceComparison(leftServer: String, rightServer: String, left: Resources?, right: Resources?) -> String {
+  guard let left, let right, !left.locations.isEmpty, !right.locations.isEmpty else {
+    return "位置证据不足：请逐条核对下方已有路径，或按需读取位置。"
+  }
+  let stale = left.stale == true || right.stale == true || left.error != nil || right.error != nil
+  let prefix = stale ? "旧缓存线索：" : "位置线索："
+  let shared = !Set(left.locations.map(\.path)).isDisjoint(with: Set(right.locations.map(\.path)))
+  if leftServer != rightServer {
+    return prefix + (shared ? "跨服务器出现相同路径文本，不能据此认定共用文件或存了多份。" : "跨服务器路径不同，可能是同一存储的不同映射，也可能是多份资源。")
+  }
+  return prefix + (shared ? "同服务器记录有重合路径，可能是同一资源被重复入库；其余路径仍需核对。" : "同服务器记录指向不同路径，可能有多份资源或不同版本；需核对文件本体。")
 }
 public struct Server: Codable, Identifiable, Hashable {
   public let id: String

@@ -3,7 +3,7 @@ import Observation
 import EmbyScopeCore
 
 enum Page: String, CaseIterable {
-  case home = "此刻", overview = "概览", library = "片库", duplicates = "同作品对照", settings = "服务器设置"
+  case home = "此刻", overview = "概览", library = "片库", duplicates = "重复与刮削排查", settings = "服务器设置"
   var symbol: String {
     switch self { case .home: "sparkles.tv"; case .overview: "square.grid.2x2"; case .library: "rectangle.stack"; case .duplicates: "square.on.square"; case .settings: "externaldrive" }
   }
@@ -30,6 +30,7 @@ final class AppModel {
   var playbackLoading = false
   var query = ""
   var mediaType = ""
+  var reviewFilter = "issues"
   var libraryPage = 1
   var selected: Media?
   var detail: Media?
@@ -133,12 +134,12 @@ final class AppModel {
     let current = generation
     libraryGeneration += 1
     let request = libraryGeneration
-    let params = ["server": server, "q": query, "type": mediaType, "page": String(libraryPage), "pageSize": "24", "duplicates": page == .duplicates ? "true" : "false"]
+    let params = ["server": server, "q": query, "type": mediaType, "page": String(libraryPage), "pageSize": "24", "duplicates": page == .duplicates ? "true" : "false", "review": reviewFilter]
     let key = params.sorted { $0.key < $1.key }.description
     if loadedLibraryKey == key, library != nil { return }
     do {
       let result: LibraryResponse = try await client.get("api/library", query: params)
-      guard authenticated, current == generation, request == libraryGeneration, params["server"] == server, params["q"] == query, params["type"] == mediaType, params["page"] == String(libraryPage), params["duplicates"] == (page == .duplicates ? "true" : "false") else { return }
+      guard authenticated, current == generation, request == libraryGeneration, params["server"] == server, params["q"] == query, params["type"] == mediaType, params["page"] == String(libraryPage), params["review"] == reviewFilter, params["duplicates"] == (page == .duplicates ? "true" : "false") else { return }
       library = result
       libraryPage = result.page
       var acceptedParams = params
@@ -173,6 +174,7 @@ final class AppModel {
       let result: Media = try await client.get(await client.itemPath(item))
       guard request == detailGeneration, selected?.key == item.key else { return }
       detail = result
+      for source in result.duplicateSources ?? [] { if let resource = source.resources { resources[source.key] = resource } }
       if let resource = result.resources { resources[item.key] = resource }
     } catch { if request == detailGeneration { detailError = error.localizedDescription } }
   }

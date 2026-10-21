@@ -134,6 +134,7 @@ struct MediaCard: View {
       Button { Task { await app.select(item) } } label: {
         VStack(alignment: .leading, spacing: 5) {
           Text(item.title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+          if let review = item.comparison { Text(review.label).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.accent) }
           Text(item.metadata).font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
           HStack(spacing: 5) {
             Text(item.serverName ?? "来源未知").lineLimit(1)

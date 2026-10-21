@@ -45,4 +45,16 @@ struct ModelTests {
     #expect(displayDate("not-a-date") == "时间未知")
     #expect(displayDate("2026-10-20T12:00:00.000Z") != "时间未知")
   }
+  @Test func testResourceEvidenceDoesNotClaimPhysicalCopies() throws {
+    func resource(_ path: String, stale: Bool = false) throws -> Resources {
+      try JSONDecoder().decode(Resources.self, from: JSONSerialization.data(withJSONObject: [
+        "locations": [["path": path, "label": "位置"]], "hiddenRemote": false, "stale": stale
+      ]))
+    }
+    let local = try resource("/media/video.strm")
+    #expect(resourceComparison(leftServer: "a", rightServer: "a", left: local, right: local).contains("重复入库"))
+    #expect(resourceComparison(leftServer: "a", rightServer: "b", left: local, right: local).contains("不能据此认定"))
+    #expect(resourceComparison(leftServer: "a", rightServer: "a", left: local, right: try resource("/other/video.strm", stale: true)).hasPrefix("旧缓存线索"))
+    #expect(resourceComparison(leftServer: "a", rightServer: "b", left: local, right: nil).contains("证据不足"))
+  }
 }

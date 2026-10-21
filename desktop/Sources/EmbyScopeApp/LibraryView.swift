@@ -7,9 +7,21 @@ struct LibraryView: View {
     @Bindable var app = app
     VStack(alignment: .leading, spacing: 20) {
       HStack {
-        SectionTitle(title: app.page == .duplicates ? "同作品，逐条看清。" : "你的片库", subtitle: app.page == .duplicates ? "同作品的多条记录，不代表物理文件重复；在详情里对照实际资源位置。" : "电影与剧集 · 每张卡片保留来源")
+        SectionTitle(title: app.page == .duplicates ? "重复与刮削排查" : "你的片库", subtitle: app.page == .duplicates ? "分开核对资源重复线索与元数据疑点。不同季不直接算重复，证据不足保留待确认。" : "电影与剧集 · 每张卡片保留来源")
         Spacer()
-        if let total = app.library?.total { Text("\(total) 个作品分组").font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary) }
+        if let total = app.library?.total { Text("\(total) 个\(app.page == .duplicates ? "关联组" : "作品分组")").font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary) }
+      }
+      if app.page == .duplicates {
+        Picker("排查范围", selection: $app.reviewFilter) {
+          Text("需核对").tag("issues")
+          Text("资源重复线索").tag("resources")
+          Text("元数据疑点").tag("metadata")
+          Text("季范围待确认").tag("unknown")
+          Text("全部关联（含不同季）").tag("all")
+        }.pickerStyle(.segmented)
+          .onChange(of: app.reviewFilter) { _, _ in app.libraryPage = 1; Task { await app.loadLibrary() } }
+        Text("只分析本地缓存；译名、不同版本和不完整季集都可能产生提示。提示不是删除依据，也不代表已确认刮削错误。")
+          .font(.caption).foregroundStyle(Theme.secondary)
       }
       HStack(spacing: 16) {
         TextField("搜索片名", text: $app.query).textFieldStyle(.roundedBorder).frame(maxWidth: 330)
@@ -58,6 +70,8 @@ struct OverviewView: View {
               metric("有多条记录的作品 →", overview.stats.duplicateGroups)
             }.buttonStyle(.plain)
           }
+          Text("去重作品数按整部电影或整部剧计数，不是重复文件数；不同季也可能属于同一作品。排查页另外核对季范围与编号冲突。")
+            .font(.caption).foregroundStyle(Theme.secondary)
           if !overview.stats.complete { Label("统计未完整，详情见各服务器状态。", systemImage: "info.circle").font(.caption).foregroundStyle(Theme.accent) }
           SectionTitle(title: "服务器", subtitle: "状态来自上次请求；在线不表示正在持续探测")
           ForEach(overview.servers) { server in

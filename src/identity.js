@@ -1,5 +1,5 @@
 // 编号连接成组后再检查冲突，避免合并结果依赖输入顺序。
-export function groupWorks(items) {
+export function workComponents(items) {
   const parents = items.map((_, index) => index)
   function root(index) {
     while (parents[index] !== index) {
@@ -22,8 +22,12 @@ export function groupWorks(items) {
     if (!components.has(key)) components.set(key, [])
     components.get(key).push(item)
   })
+  return [...components.values()]
+}
+
+export function groupWorks(items) {
   const groups = []
-  for (const members of components.values()) {
+  for (const members of workComponents(items)) {
     const ids = {}
     for (const item of members) {
       for (const [provider, id] of Object.entries(item.providerIds)) {

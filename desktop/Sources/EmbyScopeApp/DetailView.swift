@@ -32,11 +32,12 @@ struct DetailView: View {
             return a.key < b.key
           }
           VStack(alignment: .leading, spacing: 9) {
-            Text("同作品记录 · \(sources.count) 条").font(.headline)
-            Text("这里对照全部连接的缓存，不限于顶部所选服务器。每行是一个条目，同作品不等于重复文件，一个条目也可能有多个资源位置。")
+            Text("关联记录 · \(sources.count) 条").font(.headline)
+            Text("范围：全部连接的缓存。下方保留每条记录的原始标题、季范围和编号。整部剧的相同编号不代表同一季重复。")
               .font(.caption).foregroundStyle(Theme.secondary)
             if item.duplicateConflict == true { Text("编号冲突，当前条目保留独立，未自动归并。").font(.caption).foregroundStyle(Theme.accent) }
           }
+          if let comparison = item.comparison { ComparisonView(comparison: comparison, sources: sources) }
           ForEach(sources, id: \.key) { source in
             sourceRow(source, current: source.key == selected.key)
           }
@@ -73,6 +74,13 @@ struct DetailView: View {
         Spacer()
         if current { Text("当前条目").font(.system(size: 10)).foregroundStyle(Theme.accent) }
       }
+      Text(source.title).font(.system(size: 14, weight: .semibold)).textSelection(.enabled)
+      Text(source.metadata).font(.caption).foregroundStyle(Theme.secondary)
+      if let scope = source.scope { Text(scope.label).font(.caption).foregroundStyle(Theme.accent) }
+      if let overview = source.overview, !overview.isEmpty {
+        DisclosureGroup("此记录的简介") { Text(overview).font(.caption).textSelection(.enabled) }
+          .font(.caption)
+      }
       Text("条目标识：\(source.id)").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.secondary).textSelection(.enabled)
       if let ids = source.providerIds, !ids.isEmpty {
         Text(ids.keys.sorted().map { "\($0.uppercased()) \(ids[$0]!)" }.joined(separator: " · ")).font(.system(size: 10)).foregroundStyle(Theme.secondary)
@@ -92,6 +100,7 @@ struct DetailView: View {
       }
       if let error = app.resourceErrors[source.key] { Text(error).font(.caption).foregroundStyle(Theme.accent) }
       Button(app.resourceLoading.contains(source.key) ? "读取中…" : "读取资源位置") { Task { await app.loadResources(source) } }.font(.caption).disabled(app.resourceLoading.contains(source.key))
+      if !current { Button("查看此记录的季集与详情") { Task { await app.select(source) } }.font(.caption) }
     }.padding(14).background(Theme.background, in: RoundedRectangle(cornerRadius: 10))
   }
 }

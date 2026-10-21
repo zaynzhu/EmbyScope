@@ -1,6 +1,6 @@
 const app = document.querySelector('#app')
 const dialog = document.querySelector('#dialog')
-const state = { page: 'overview', server: 'all', servers: [], settings: { automaticUpdates: false }, query: '', type: '', duplicates: false, libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
+const state = { page: 'overview', server: 'all', servers: [], settings: { automaticUpdates: false }, query: '', type: '', duplicates: false, review: 'issues', libraryPage: 1, request: 0, authenticated: false, detail: null, blurNsfw: true, revealed: new Set() }
 const titles = { overview: '概览', library: '片库', settings: '服务器设置' }
 const statuses = { online: '在线', offline: '离线', partial: '部分可用', denied: '认证 / 权限异常', pending: '等待同步', error: '同步异常' }
 const datasetNames = { catalog: '片库', views: '媒体库', latest: '最近入库', resume: '继续观看' }
@@ -133,7 +133,7 @@ function overview(data) {
     statusCards(data.servers) +
     `<div class="stats">${[['媒体库', stats.libraries, '当前账号可见'], ['电影', stats.movies, '各服条目合计'], ['电视剧', stats.series, '各服条目合计'], ['单集', stats.episodes, '各服条目合计'], ['作品条目', stats.entries, '电影 + 电视剧'], ['去重作品', stats.uniqueWorks, '按有效编号匹配']].map(([name, value, hint], index) => `<div class="stat ${index === 5 ? 'accent' : ''}"><small>${name}</small><strong>${count(value)}</strong><span>${hint}</span></div>`).join('')}</div>
     <p class="notice">${stats.complete ? '统计覆盖全部所选服务器的可用缓存。' : `当前 ${stats.knownServers} / ${stats.totalServers} 台服务器具有片库缓存，数值为已知部分合计。`}${data.servers.some(server => server.episodeSync?.total === null) ? ' 单集总数正在按季接口补全，尚未核对完时显示不可用。' : ''}${stats.limitedServers ? ` ${stats.limitedServers} 台服务器未遵循筛选条件，无法确认完整片库及单集总数。` : ''} 轻量数据与片库分开更新，周期见服务器状态。${stats.conflicts ? ` 有 ${stats.conflicts} 个编号冲突条目独立保留。` : ''} 编号缺失时不按同名合并；去重作品数包含无法确认是否重复的独立条目。</p>
-    <p class="notice">有 ${count(stats.duplicateGroups)} 部作品匹配到多条媒体库记录；按每部作品只计 1 条后，多出 ${count(stats.extraEntries)} 条记录。<button data-action="duplicates">查看同作品多条记录</button> 这是作品记录对照，不是重复文件检测。</p>
+    <p class="notice">有 ${count(stats.duplicateGroups)} 部作品匹配到多条媒体库记录；按每部作品只计 1 条后，多出 ${count(stats.extraEntries)} 条记录。<button data-action="duplicates">重复与刮削排查</button> 这是整部作品的编号归组，不是重复文件检测；不同季也可能在同一组。排查页会另行区分季范围与元数据疑点。</p>
     <section class="panel"><div class="section-title"><h2>我的媒体库</h2><small>当前账号的顶层媒体库</small></div>${datasetNotice(data.servers, 'views')}
     ${data.views.length ? `<div class="libraries">${data.views.map(view => `<div class="library-tile"><span class="library-symbol" aria-hidden="true">${view.type === 'tvshows' ? '▤' : '▥'}</span><div><strong>${e(view.name)}</strong><small>${e(view.serverName)}</small></div></div>`).join('')}</div>` : '<div class="empty">暂无可用媒体库</div>'}</section>
     <section class="panel"><div class="section-title"><h2>最近入库</h2><small>按各服入库时间合并 · 最多 24 条</small></div>${datasetNotice(data.servers, 'latest')}${mediaCards(data.latest)}</section>
@@ -142,13 +142,14 @@ function overview(data) {
 }
 
 function library(data) {
-  return heading('我的片库', '跨服务器浏览电影与电视剧，每个来源都清晰可查。', '<button data-action="refresh">↻ 更新概览</button><button data-action="full-refresh">完整校准片库</button>') +
+  return heading(state.duplicates ? '重复与刮削排查' : '我的片库', '跨服务器浏览电影与电视剧，每个来源都清晰可查。', '<button data-action="refresh">↻ 更新概览</button><button data-action="full-refresh">完整校准片库</button>') +
     `<form class="filters" id="search-form"><label>搜索作品<input id="search" name="q" type="search" placeholder="输入电影或电视剧名称" value="${e(state.query)}" maxlength="200"></label>
     <label>服务器<select id="library-server-select" aria-label="片库服务器"><option value="all">全部服务器 · 汇总</option>${state.servers.map(server => `<option value="${e(server.id)}" ${state.server === server.id ? 'selected' : ''}>${e(server.name)}${server.nsfw ? ' · NSFW' : ''}</option>`).join('')}</select></label>
-    <label>条目范围<select id="duplicate-select"><option value="all">全部作品</option><option value="duplicates" ${state.duplicates ? 'selected' : ''}>同作品多条记录</option></select></label>
+    <label>条目范围<select id="duplicate-select"><option value="all">全部作品</option><option value="duplicates" ${state.duplicates ? 'selected' : ''}>重复与刮削排查</option></select></label>
+    ${state.duplicates ? `<label>排查范围<select id="review-select">${[['issues', '需核对'], ['resources', '资源重复线索'], ['metadata', '元数据疑点'], ['unknown', '季范围待确认'], ['all', '全部关联（含不同季）']].map(([value, label]) => `<option value="${value}" ${state.review === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>` : ''}
     <label>媒体类型<select id="type-select"><option value="">全部类型</option><option value="Movie" ${state.type === 'Movie' ? 'selected' : ''}>电影</option><option value="Series" ${state.type === 'Series' ? 'selected' : ''}>电视剧</option></select></label><button type="submit">搜索</button></form>
     ${statusCards(data.servers)}${datasetNotice(data.servers, 'catalog')}
-    <section class="panel"><div class="section-title"><h2>${data.total === null ? '作品数量不可用' : `${count(data.total)} 部作品`}</h2><small>有效编号去重 · 已知 ${data.knownServers} / ${data.servers.length} 台 · 每页 ${data.pageSize} 部</small></div>
+    <section class="panel"><div class="section-title"><h2>${data.total === null ? '作品数量不可用' : `${count(data.total)} 部作品`}</h2><small>${state.duplicates ? "关联线索，未确认重复" : "有效编号去重"} · 已知 ${data.knownServers} / ${data.servers.length} 台 · 每页 ${data.pageSize} 部</small></div>
     ${data.items.length ? mediaCards(data.items) : '<div class="empty">没有匹配的作品。可调整搜索词、类型或服务器筛选。</div>'}
     <div class="pagination"><button data-page="${data.page - 1}" ${data.page === 1 ? 'disabled' : ''}>上一页</button><span>第 ${data.page} / ${data.pages} 页</span><button data-page="${data.page + 1}" ${data.page >= data.pages ? 'disabled' : ''}>下一页</button></div></section>`
 }
@@ -173,7 +174,7 @@ async function loadView({ preserveSearch = false } = {}) {
     state.settings = updateSettings
     updateServers()
     const page = state.page
-    const params = new URLSearchParams({ server: state.server, q: state.query, type: state.type, page: state.libraryPage, duplicates: state.duplicates })
+    const params = new URLSearchParams({ server: state.server, q: state.query, type: state.type, page: state.libraryPage, duplicates: state.duplicates, review: state.review })
     const data = page === 'settings' ? null : await api(`/api/${page === 'overview' ? 'overview' : 'library'}?${params}`)
     if (request !== state.request || !state.authenticated) return
     const focused = preserveSearch && document.activeElement?.id === 'search'
@@ -225,12 +226,13 @@ function renderSourceComparison(item) {
   const ordered = [...sources].sort((a, b) => Number(isCurrent(b)) - Number(isCurrent(a)))
   const serverCount = new Set(sources.map(source => source.serverId)).size
   const multiple = sources.length > 1
-  return `<section class="resource-section"><h2>${multiple ? '同作品记录对照' : '当前记录与资源位置'}</h2>
+  return `<section class="resource-section"><h2>${multiple ? '关联记录与资源排查' : '当前记录与资源位置'}</h2>
     <p>${multiple ? `共 ${sources.length} 条媒体库记录，分布在 ${serverCount} 台服务器。包含当前查看的 1 条，另有 ${sources.length - 1} 条。` : item.duplicateConflict ? '当前记录的外部编号存在冲突，暂不与其他记录归组；不能据此判断有无重复。' : '当前缓存中尚未匹配到其他同作品记录。'}</p>
+    ${item.comparison ? `<p class="notice"><strong>${e(item.comparison.label)}</strong><br>${item.comparison.reasons.map(e).join('<br>')}<br>${item.comparison.counts.candidate} 对资源线索 · ${item.comparison.counts.distinct} 对季范围无重叠 · ${item.comparison.counts.unknown} 对待确认</p><details><summary>逐对核对依据</summary>${item.comparison.pairs.map(pair => `<p>${e(sources.find(s => s.key === pair.leftKey)?.title)} ↔ ${e(sources.find(s => s.key === pair.rightKey)?.title)}：${e(pair.reason)}</p>`).join('')}</details>` : ''}
     <p class="muted">对照范围：全部已连接服务器的片库缓存，不受当前片库服务器筛选限制。${item.duplicateConflict ? '' : '按媒体类型与有效外部编号匹配同一作品，未比较文件内容。'}</p>
     <p class="muted">一条记录是服务器片库中的一个条目，可以包含多个资源路径或媒体版本；路径数量不计入上面的记录数。不同清晰度、剪辑版或跨服收藏不一定需要清理。</p>
-    ${ordered.map((source, index) => `<div class="duplicate-source"><strong>记录 ${index + 1}${isCurrent(source) ? ' · 当前查看' : ''} · ${e(source.serverName || item.serverName)}</strong><span>${e(source.title)}</span><small>服务器内条目 ID：${e(source.id)}</small><small>作品编号：${Object.entries(source.providerIds || {}).map(([key, value]) => `${e(key.toUpperCase())} ${e(value)}`).join(' · ') || '未提供有效编号'}</small>
-      <div id="resource-${e(source.serverId)}-${e(source.id)}">${isCurrent(source) ? renderResources(item.resources) : '<span class="muted">尚未读取此记录的资源路径</span>'}</div>
+    ${ordered.map((source, index) => `<div class="duplicate-source"><strong>记录 ${index + 1}${isCurrent(source) ? ' · 当前查看' : ''} · ${e(source.serverName || item.serverName)}</strong><span>${e(source.title)}</span><small>${e(source.scope?.label || "")} · ${e(source.year || "年份未知")}</small><small>服务器内条目 ID：${e(source.id)}</small><small>作品编号：${Object.entries(source.providerIds || {}).map(([key, value]) => `${e(key.toUpperCase())} ${e(value)}`).join(' · ') || '未提供有效编号'}</small>
+      <div id="resource-${e(source.serverId)}-${e(source.id)}">${source.resources ? renderResources(source.resources) : isCurrent(source) ? renderResources(item.resources) : '<span class="muted">尚未读取此记录的资源路径</span>'}</div>
       <button data-resource="${e(source.id)}" data-server="${e(source.serverId)}">读取此记录的路径</button>${isCurrent(source) ? '' : `<button data-item="${e(source.id)}" data-server="${e(source.serverId)}">查看此记录详情</button>`}</div>`).join('')}
     <p class="muted">路径由对应服务器报告，可能是容器挂载路径、STRM 文件或虚拟目录，不保证等于 NAS 物理路径；仅凭记录数或路径无法判断文件是否可以删除。</p></section>`
 }
@@ -329,6 +331,10 @@ document.addEventListener('click', async event => {
 document.addEventListener('change', async event => {
   if (['server-select', 'library-server-select'].includes(event.target.id)) {
     state.server = event.target.value
+    state.libraryPage = 1
+    await loadView()
+  } else if (event.target.id === 'review-select') {
+    state.review = event.target.value
     state.libraryPage = 1
     await loadView()
   } else if (event.target.id === 'duplicate-select') {

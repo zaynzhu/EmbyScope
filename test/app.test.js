@@ -306,7 +306,7 @@ test('兼容后台断网触发冷却，重启读取已完成季缓存不重复�
   assert.equal(summary.stale, true)
 })
 
-test('重复作品入口与额外条目数对应，详情按需读取各服位置并缓存，拒绝原始远程凭据', async t => {
+test('排查入口含编号冲突，详情按需读取各服位置并缓存，拒绝原始远程凭据', async t => {
   const f = await fixture(t)
   await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
   const aId = await f.connect(f.a, '影院 A')
@@ -315,11 +315,12 @@ test('重复作品入口与额外条目数对应，详情按需读取各服位�
   const stats = f.app.service.overview().stats
   assert.equal(stats.extraEntries, stats.entries - stats.uniqueWorks)
   const groups = (await f.request('/api/library?duplicates=true&pageSize=60')).data
-  assert.equal(groups.total, stats.duplicateGroups)
-  assert.ok(groups.items.every(group => group.sources.length > 1 && !group.conflict))
+  assert.equal(groups.total, stats.duplicateGroups + 1)
+  assert.ok(groups.items.every(group => group.sources.length > 1 && group.comparison))
+  assert.equal(groups.items.filter(group => group.conflict).length, 1)
   const nextPage = (await f.request('/api/library?duplicates=true&page=2')).data
   assert.equal(nextPage.page, 2)
-  assert.equal(nextPage.items.length, 6)
+  assert.equal(nextPage.items.length, 7)
   assert.equal((await f.request(`/api/library?server=${aId}&duplicates=true`)).data.total, 0)
   const before = f.a.calls.length
   const detail = (await f.request(`/api/items/${aId}/1`)).data
@@ -481,4 +482,34 @@ test('自动全库分页过程中暂停，不再发送后续页，保留旧完�
   assert.equal(f.a.calls.length - before, 1)
   assert.deepEqual(f.app.store.cache(id, 'catalog'), old)
   assert.equal(f.app.store.server(id).status, 'online')
+})
+
+test('离线排查区分不同季与同季线索，筛选分页、跨服身份、缓存路径均不触发远端', async t => {
+  const f = await fixture(t)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const aId = await f.connect(f.a, '影院 A')
+  const bId = await f.connect(f.b, '影院 B')
+  await f.app.service.drain()
+  f.app.service.offline = true
+  const make = (serverId, id, season, tmdb = '33880', title = '科拉传奇') => ({ id, key: `${serverId}:${id}`, serverId, title: `${title} 第 ${season} 季`, type: 'Series', providerIds: { tmdb }, genres: [] })
+  f.app.store.saveCache(aId, 'catalog', [make(aId, '1', 1), make(aId, '2', 2), make(aId, '3', 1, '100', '另一部剧'), make(aId, '4', 2, '100', '另一部剧')])
+  f.app.store.saveCache(bId, 'catalog', [make(bId, '2', 2)])
+  f.app.store.saveCache(aId, 'resources:2', { locations: [{ path: '/media/s2.strm', label: '条目位置' }], hiddenRemote: false })
+  f.app.store.saveCache(bId, 'resources:2', { locations: [{ path: '/media/s2.strm', label: '条目位置' }], hiddenRemote: false })
+  const calls = f.a.calls.length + f.b.calls.length
+  const candidate = (await f.request('/api/library?duplicates=true&review=resources&pageSize=1')).data
+  assert.equal(candidate.total, 1)
+  assert.deepEqual(candidate.items[0].comparison.counts, { candidate: 1, distinct: 2, unknown: 0 })
+  assert.equal(candidate.items[0].sources.length, 3)
+  assert.equal((await f.request(`/api/library?server=${aId}&duplicates=true`)).data.total, 0)
+  const all = (await f.request('/api/library?duplicates=true&review=all&pageSize=1&page=2')).data
+  assert.equal(all.total, 2)
+  assert.equal(all.page, 2)
+  assert.equal((await f.request('/api/library?duplicates=true&review=metadata')).data.total, 0)
+  assert.equal((await f.request('/api/library?duplicates=true&q=另一部剧')).data.total, 0)
+  const detail = (await f.request(`/api/items/${aId}/2`)).data
+  assert.equal(detail.comparison.counts.candidate, 1)
+  assert.equal(detail.duplicateSources.filter(source => source.id === '2').length, 2)
+  assert.equal(detail.duplicateSources.filter(source => source.resources.locations.length).length, 2)
+  assert.equal(f.a.calls.length + f.b.calls.length, calls)
 })
