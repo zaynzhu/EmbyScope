@@ -33,6 +33,8 @@ test('一致性导入包含WAL，保留凭据与原库，清会话并暂停，�
     assert.equal(copied.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get().value, 'false')
     assert.equal(store.db.prepare("SELECT value FROM settings WHERE name='automaticUpdates'").get().value, 'true')
     assert.ok(existsSync(join(destination, 'offline-preview')))
+    const backupResult = await copyDataDirectory(destination, join(root, 'offline-backup'))
+    assert.equal(backupResult.offlinePreview, true)
     assert.ok(key.equals(readFileSync(join(source, 'secret.key'))))
     await assert.rejects(copyDataDirectory(source, destination))
     await assert.rejects(copyDataDirectory(source, join(source, 'nested')))

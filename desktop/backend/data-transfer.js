@@ -54,7 +54,7 @@ export async function copyDataDirectory(sourceDirectory, destinationDirectory, {
       servers: copiedDb.prepare('SELECT count(*) AS count FROM servers').get().count,
       entries: copiedDb.prepare("SELECT coalesce(sum(json_array_length(data)),0) AS count FROM cache WHERE kind='catalog'").get().count,
       images: copiedDb.prepare('SELECT count(*) AS count FROM images').get().count,
-      offlinePreview
+      offlinePreview: existsSync(join(stage, 'offline-preview'))
     }
     copiedDb.exec('PRAGMA wal_checkpoint(TRUNCATE)')
     copiedDb.close()
