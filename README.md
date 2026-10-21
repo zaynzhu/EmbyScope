@@ -8,9 +8,9 @@
 
 新增 SwiftUI 原生界面：以「此刻」首页展示账号最近观看和继续观看，原概览在第二页；另有片库、同作品记录对照、资源路径及服务器设置。复用 Node 业务内核和 SQLite，应用自带运行时，网页版继续保留。
 
-在 Mac 上运行 `scripts/build-macos-app.sh` 构建，再用 `open dist/EmbyScope.app --args --demo` 打开隔离演示。普通双击启动使用独立配置目录，不自动导入网页版数据。当前为本机架构、临时签名的开发预览，尚未制作 DMG 或公证。
+在 Mac 上运行 `scripts/build-macos-app.sh` 构建，再用 `open dist/EmbyScope.app --args --demo` 打开隔离演示。普通双击启动使用独立配置目录，不自动导入网页版数据。也可运行 `scripts/build-macos-dmg.sh` 生成 DMG。已验证本机 arm64 安装、真实缓存导入及限定范围接口读取；采用临时签名，尚未完成 Apple 公证。
 
-参见 [桌面版使用说明](docs/macOS使用说明.md) 和 [桌面版验收记录](docs/macOS验收记录.md)。
+参见 [桌面版使用说明](docs/macOS使用说明.md) 、[安装与备份](docs/macOS安装与备份.md) 和 [桌面版验收记录](docs/macOS验收记录.md)。
 
 ![macOS 原生首页，虚构演示数据](docs/images/macos-home.png)
 
