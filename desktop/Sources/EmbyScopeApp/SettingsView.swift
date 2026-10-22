@@ -3,8 +3,7 @@ import EmbyScopeCore
 
 struct SettingsView: View {
   @Environment(AppModel.self) private var app
-  @State private var editing: Server?
-  @State private var showEditor = false
+  @State private var editing: ServerEditorTarget?
   @State private var deleting: Server?
   @State private var confirmFull = false
   @State private var confirmOnline = false
@@ -36,7 +35,7 @@ struct SettingsView: View {
           }
           Text("轻量更新读取媒体库、最近入库和继续观看；完整校准会分页读取片库。所有远端请求限速，同服务间隔至少两秒。").font(.caption).foregroundStyle(Theme.secondary)
         }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
-        HStack { Text("已连接的服务器").font(.title3.weight(.semibold)); Spacer(); Button("添加服务器") { editing = nil; showEditor = true }.buttonStyle(GoldButton()).disabled(app.demo || app.offline) }
+        HStack { Text("已连接的服务器").font(.title3.weight(.semibold)); Spacer(); Button("添加服务器") { editing = ServerEditorTarget(server: nil) }.buttonStyle(GoldButton()).disabled(app.demo || app.offline) }
         ForEach(app.servers) { server in
           VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -46,7 +45,7 @@ struct SettingsView: View {
               Spacer()
               Text(server.statusLabel).font(.caption).foregroundStyle(Theme.secondary)
               Button("关联反代") { proxyTarget = server }
-              Button("编辑") { editing = server; showEditor = true }.disabled(app.demo || app.offline)
+              Button("编辑") { editing = ServerEditorTarget(server: server) }.disabled(app.demo || app.offline)
               Button("删除") { deleting = server }.disabled(app.demo || app.offline)
             }
             if let proxy = server.proxyUrl { Text("关联反代：\(proxy) · 同一服务器连接").font(.caption).foregroundStyle(Theme.secondary).textSelection(.enabled) }
@@ -66,7 +65,7 @@ struct SettingsView: View {
       Button("取消", role: .cancel) {}
       Button("退出，保持自动更新关闭") { Task { await app.exitOffline() } }
     } message: { Text("退出操作本身不更新片库。之后手动更新、详情和海报可能访问已配置的服务器；自动更新仍关闭，不会立即扫库。") }
-    .sheet(isPresented: $showEditor) { ServerEditor(server: editing) }
+    .sheet(item: $editing) { ServerEditor(server: $0.server) }
     .alert("删除这个连接？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
       Button("取消", role: .cancel) { deleting = nil }
       Button("删除本地连接", role: .destructive) { if let target = deleting { Task { await app.deleteServer(target) } }; deleting = nil }
@@ -76,6 +75,12 @@ struct SettingsView: View {
       Button("开始校准") { Task { await app.refresh(full: true) } }
     } message: { Text("将按限速分页读取当前范围的远端片库，较大媒体库可能耗时较长。") }
   }
+}
+
+// 弹窗与目标共用同一状态，避免首次展示时捕获上一轮的服务器。
+private struct ServerEditorTarget: Identifiable {
+  let id = UUID()
+  let server: Server?
 }
 
 private struct ServerEditor: View {
