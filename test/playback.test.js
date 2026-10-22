@@ -29,7 +29,7 @@ test('会话仅属于当前账号，白名单字段、暂停与缺失心跳、�
   assert.equal(playbackSnapshot(store, servers, true, now).servers[0].sessions[0].state, 'unknown')
 })
 
-test('手动会话读取按原地址独立隔离、限冷却、失败保留旧快照但不冒充播放', async t => {
+test('会话读取按原地址独立隔离、10秒冷却及失败退避，不冒充播放', async t => {
   const root = mkdtempSync(join(tmpdir(), 'embyscope-playback-'))
   const store = new Store(root)
   t.after(() => {
@@ -56,6 +56,15 @@ test('手动会话读取按原地址独立隔离、限冷却、失败保留旧�
   assert.match(snapshot.servers[1].error, /不可用/)
   await refreshPlayback(service, store.server('a'))
   assert.equal(calls, 2)
+  store.saveCache('a', 'playbackAttempt', { at: Date.now() - 11000 })
+  await refreshPlayback(service, store.server('a'))
+  assert.equal(calls, 3)
+  store.saveCache('b', 'playbackAttempt', { at: Date.now() - 31000 })
+  await refreshPlayback(service, store.server('b'))
+  assert.equal(calls, 3)
+  store.saveCache('b', 'playbackAttempt', { at: Date.now() - 61000 })
+  await refreshPlayback(service, store.server('b'))
+  assert.equal(calls, 4)
   store.db.prepare("DELETE FROM cache WHERE kind='playbackAttempt'").run()
   fail = 503
   await refreshPlayback(service, store.server('a'))
@@ -110,7 +119,12 @@ test('首页GET不读取远端，手动接口需要管理员认证且只读会�
   headers.Cookie = setup.headers.get('set-cookie').split(';')[0]
   assert.equal((await fetch(base + '/api/home', { headers })).status, 200)
   assert.equal(calls, 0)
-  assert.equal((await fetch(base + '/api/playback/refresh', { method: 'POST', headers, body: '{}' })).status, 200)
+  const refreshed = await fetch(base + '/api/playback/refresh', { method: 'POST', headers, body: '{}' })
+  assert.equal(refreshed.status, 200)
+  const playback = await refreshed.json()
+  assert.equal(playback.ok, true)
+  assert.equal(playback.servers[0].sessions[0].state, 'playing')
+  assert.ok(!JSON.stringify(playback).includes('not-public'))
   const snapshot = await (await fetch(base + '/api/home', { headers })).json()
   assert.equal(calls, 1)
   assert.equal(snapshot.playback.servers[0].sessions[0].state, 'playing')

@@ -58,6 +58,38 @@ struct AppModelTests {
     ["items": [["id": "same", "serverId": "a", "title": title]], "total": 1, "page": page, "pages": page, "servers": []]
   }
 
+  private func playbackHome() throws -> HomeResponse {
+    try JSONDecoder().decode(HomeResponse.self, from: JSONSerialization.data(withJSONObject: [
+      "recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "保留首页内容"
+    ]))
+  }
+  @Test func playbackUpdatesOnlyItsSnapshotWithoutReloadingCatalog() async throws {
+    let (model, requests) = fixture()
+    model.home = try playbackHome()
+    let task = Task { await model.refreshPlayback() }
+    let request = await requests.next()
+    #expect(request.request.url?.path == "/api/playback/refresh")
+    #expect(request.request.httpMethod == "POST")
+    request.respond(["ok": true, "servers": []])
+    await task.value
+    #expect(model.home?.playback != nil)
+    #expect(model.home?.historyNote == "保留首页内容")
+    #expect(!model.playbackLoading)
+    #expect(!model.automaticUpdates)
+  }
+  @Test func playbackFromPreviousServerDoesNotOverwriteCurrentScope() async throws {
+    let (model, requests) = fixture()
+    model.home = try playbackHome()
+    model.server = "a"
+    let task = Task { await model.refreshPlayback() }
+    let request = await requests.next()
+    model.server = "b"
+    request.respond(["ok": true, "servers": []])
+    await task.value
+    #expect(model.home?.playback == nil)
+    #expect(!model.playbackLoading)
+  }
+
   @Test func pageClampedByBackendUpdatesNavigation() async {
     let (model, requests) = fixture()
     model.page = .library

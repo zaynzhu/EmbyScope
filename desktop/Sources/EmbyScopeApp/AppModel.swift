@@ -230,15 +230,15 @@ final class AppModel {
     } catch { report(error) }
   }
   func refreshPlayback() async {
-    guard let client, !offline, !demo, !playbackLoading else { return }
+    guard let client, authenticated, !offline, !demo, !playbackLoading, !Task.isCancelled else { return }
     playbackLoading = true
     let current = generation
     let scope = server
     defer { playbackLoading = false }
     do {
-      let _: OK = try await client.send("api/playback/refresh", fields: ["server": scope])
-      if current == generation, authenticated { await loadScope() }
-    } catch { if current == generation { report(error) } }
+      let snapshot: PlaybackResponse = try await client.send("api/playback/refresh", fields: ["server": scope])
+      if current == generation, scope == server, authenticated, !Task.isCancelled { home?.playback = snapshot }
+    } catch { if current == generation, !Task.isCancelled { report(error) } }
   }
   func saveProxy(_ target: Server, url: String) async throws {
     guard let client else { return }

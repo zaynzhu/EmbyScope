@@ -40,6 +40,23 @@ struct ModelTests {
     #expect(!source.isFresh(at: now.addingTimeInterval(61)))
     #expect(!source.isFresh(at: now.addingTimeInterval(-1)))
   }
+  @Test func testPlaybackProgressUsesReportedValuesOnly() throws {
+    func session(_ position: Double?, _ duration: Double?) throws -> PlaybackResponse.Session {
+      var fields: [String: Any] = ["id": "session", "itemId": "item", "title": "模拟播放", "state": "playing"]
+      fields["positionTicks"] = position
+      fields["runtimeTicks"] = duration
+      return try JSONDecoder().decode(PlaybackResponse.Session.self, from: JSONSerialization.data(withJSONObject: fields))
+    }
+    let valid = try session(87529109941, 97129040000)
+    #expect(valid.progressLabel == "2:25:52 / 2:41:52")
+    #expect(valid.progress != nil && valid.progress! > 0.9)
+    #expect(try session(nil, 600000000).progress == nil)
+    #expect(try session(nil, nil).progressLabel == "未知 / 未知")
+    #expect(try session(0, 0).progress == nil)
+    #expect(try session(-1, 100).progress == nil)
+    #expect(try session(200, 100).progress == 1)
+    #expect(try session(0, 600000000).progressLabel == "0:00 / 1:00")
+  }
   @Test func testUnknownDateIsNotFabricated() {
     #expect(displayDate(nil) == "时间未知")
     #expect(displayDate("not-a-date") == "时间未知")

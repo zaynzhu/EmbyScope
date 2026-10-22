@@ -1,6 +1,8 @@
 import { RemoteError } from './emby.js'
 
 const SNAPSHOT_TTL = 60000
+const REFRESH_INTERVAL = 10000
+const ERROR_BACKOFF = 60000
 const text = value => typeof value === 'string' && value.length <= 300 ? value : null
 const ticks = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 
@@ -42,7 +44,8 @@ export async function refreshPlayback(service, row) {
   if (service.offline || service.stopping) throw new RemoteError('离线预览不能读取播放会话', 409)
   if (service.playbackJobs.has(row.id)) return service.playbackJobs.get(row.id)
   const attempt = service.store.cache(row.id, 'playbackAttempt')?.data?.at || 0
-  if (Date.now() - attempt < 30000) return
+  const cooldown = service.store.cache(row.id, 'playback')?.error ? ERROR_BACKOFF : REFRESH_INTERVAL
+  if (Date.now() - attempt < cooldown) return
   service.store.saveCache(row.id, 'playbackAttempt', { at: Date.now() })
   const job = (async () => {
     try {

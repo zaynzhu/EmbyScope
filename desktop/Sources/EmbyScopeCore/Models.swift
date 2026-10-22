@@ -131,6 +131,20 @@ public struct PlaybackResponse: Decodable {
     public let state: String
     public let positionTicks: Double?
     public let runtimeTicks: Double?
+    public var progress: Double? {
+      guard let positionTicks, let runtimeTicks, positionTicks.isFinite, runtimeTicks.isFinite,
+        positionTicks >= 0, runtimeTicks > 0 else { return nil }
+      return min(positionTicks / runtimeTicks, 1)
+    }
+    public var progressLabel: String {
+      func timestamp(_ ticks: Double?) -> String {
+        guard let ticks, ticks.isFinite, ticks >= 0, ticks / 10_000_000 < Double(Int.max) else { return "未知" }
+        let seconds = Int(ticks / 10_000_000)
+        return seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+          : String(format: "%d:%02d", seconds / 60, seconds % 60)
+      }
+      return "\(timestamp(positionTicks)) / \(timestamp(runtimeTicks))"
+    }
   }
   public struct Source: Decodable {
     public let serverId: String
@@ -156,7 +170,7 @@ private extension ISO8601DateFormatter {
   }
 }
 public struct HomeResponse: Decodable {
-  public let playback: PlaybackResponse?
+  public var playback: PlaybackResponse?
 
   public struct Source: Decodable { public let serverId: String; public let serverName: String; public let kind: String; public let updatedAt: String?; public let error: String?; public let available: Bool; public let stale: Bool }
   public let recent: [Media]

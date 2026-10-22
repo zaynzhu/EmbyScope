@@ -163,7 +163,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
       if (path === '/api/playback/refresh' && method === 'POST') {
         const body = await readBody(request)
         await Promise.all(service.selected(body.server).map(row => refreshPlayback(service, row)))
-        return send(response, 200, { ok: true })
+        return send(response, 200, { ok: true, ...playbackSnapshot(store, service.selected(body.server), service.offline) })
       }
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))
       if (path === '/api/home' && method === 'GET') return send(response, 200, { ...homeSnapshot(store, service.selected(url.searchParams.get('server'))), playback: playbackSnapshot(store, service.selected(url.searchParams.get('server')), service.offline) })
