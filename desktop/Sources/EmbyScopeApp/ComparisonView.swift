@@ -11,7 +11,9 @@ struct ComparisonView: View {
       ForEach(comparison.reasons, id: \.self) { reason in
         Label(reason, systemImage: "exclamationmark.magnifyingglass").font(.caption)
       }
-      Text("\(comparison.counts.candidate) 对资源线索 · \(comparison.counts.distinct) 对季范围无重叠 · \(comparison.counts.unknown) 对待确认")
+      Text("\(comparison.counts.candidate) 对候选 · \(comparison.counts.distinct) 对季范围无重叠 · \(comparison.counts.unknown) 对待确认")
+        .font(.caption).foregroundStyle(Theme.secondary)
+      Text("这里统计记录之间的配对，不是文件份数。例如 3 条记录可形成 3 对；候选仍需核对位置、版本与单集。")
         .font(.caption).foregroundStyle(Theme.secondary)
       DisclosureGroup("逐对核对依据与位置线索") {
         ForEach(Array(comparison.pairs.enumerated()), id: \.offset) { _, pair in

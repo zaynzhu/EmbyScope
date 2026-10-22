@@ -56,6 +56,17 @@ struct ModelTests {
     #expect(resourceComparison(leftServer: "a", rightServer: "b", left: local, right: local).contains("不能据此认定"))
     #expect(resourceComparison(leftServer: "a", rightServer: "a", left: local, right: try resource("/other/video.strm", stale: true)).hasPrefix("旧缓存线索"))
     #expect(resourceComparison(leftServer: "a", rightServer: "b", left: local, right: nil).contains("证据不足"))
+    let directory = try resource("/media/series")
+    #expect(resourceComparison(leftServer: "a", rightServer: "a", left: directory, right: directory).contains("目录或未知类型"))
+    #expect(!resourceComparison(leftServer: "a", rightServer: "a", left: directory, right: directory).contains("重复入库"))
+    #expect(resourceComparison(leftServer: "a", rightServer: "a", left: directory, right: local).contains("证据不足"))
+    let namedDirectory = try resource("/media/movie.mkv/")
+    #expect(resourceComparison(leftServer: "a", rightServer: "a", left: namedDirectory, right: namedDirectory).contains("目录或未知类型"))
+    let mixed = try JSONDecoder().decode(Resources.self, from: JSONSerialization.data(withJSONObject: [
+      "locations": [["path": "/media/series", "label": "目录"], ["path": "/media/a.mkv", "label": "文件"]], "hiddenRemote": false
+    ]))
+    #expect(!resourceComparison(leftServer: "a", rightServer: "a", left: mixed, right: directory).contains("重复入库"))
+    #expect(resourceComparison(leftServer: "a", rightServer: "a", left: mixed, right: try resource("/media/b.mkv")).contains("未确认有多份"))
   }
   @Test func testSupplementalEvidenceSurvivesDetailDecoding() throws {
     let item = try media(["id": "a", "serverId": "s", "title": "电影", "comparison": [

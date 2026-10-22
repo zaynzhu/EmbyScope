@@ -145,7 +145,7 @@ export function comparisonGroups(items, children = [], resources = new Map()) {
     }
     if (supplemental) reasons.push('包含编号未关联的补充线索；同名同年或同服路径相同只供核对，不参与作品去重。')
     const hasMetadata = reasons.length > 0
-    const label = conflict ? '编号冲突' : hasMetadata ? '元数据待核对' : counts.candidate ? '可能存在重复资源' : counts.unknown ? '季范围待确认' : '不同季，暂无线索'
+    const label = conflict ? '编号冲突' : hasMetadata ? '元数据待核对' : counts.candidate ? '同作品／同季多条记录' : counts.unknown ? '季范围待确认' : '不同季，暂无线索'
     const priority = { candidate: 0, unknown: 1, distinct: 2 }
     pairs.sort((a, b) => priority[a.kind] - priority[b.kind])
     return { ...(candidateSource || sources[0]), sources, conflict, comparison: { label, reasons, counts, hasMetadata, supplemental, pairs, truncated: pairs.length < sources.length * (sources.length - 1) / 2 } }

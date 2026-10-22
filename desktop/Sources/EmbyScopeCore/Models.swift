@@ -86,11 +86,23 @@ public func resourceComparison(leftServer: String, rightServer: String, left: Re
   }
   let stale = left.stale == true || right.stale == true || left.error != nil || right.error != nil
   let prefix = stale ? "旧缓存线索：" : "位置线索："
-  let shared = !Set(left.locations.map(\.path)).isDisjoint(with: Set(right.locations.map(\.path)))
+  // 目录及未知类型不能当作文件身份；扩展名也只是文件路径线索。
+  let extensions: Set<String> = ["mkv", "mp4", "avi", "mov", "m4v", "wmv", "ts", "m2ts", "iso", "strm"]
+  func filePaths(_ resource: Resources) -> Set<String> {
+    Set(resource.locations.map(\.path).filter { path in
+      !path.hasSuffix("/") && !path.hasSuffix("\\") && extensions.contains((path as NSString).pathExtension.lowercased())
+    })
+  }
+  let leftFiles = filePaths(left)
+  let rightFiles = filePaths(right)
+  guard !leftFiles.isEmpty, !rightFiles.isEmpty else {
+    return prefix + "位置证据不足：包含目录或未知类型路径，不能据此推断重复文件。"
+  }
+  let shared = !leftFiles.isDisjoint(with: rightFiles)
   if leftServer != rightServer {
     return prefix + (shared ? "跨服务器出现相同路径文本，不能据此认定共用文件或存了多份。" : "跨服务器路径不同，可能是同一存储的不同映射，也可能是多份资源。")
   }
-  return prefix + (shared ? "同服务器记录有重合路径，可能是同一资源被重复入库；其余路径仍需核对。" : "同服务器记录指向不同路径，可能有多份资源或不同版本；需核对文件本体。")
+  return prefix + (shared ? "同服务器存在重合的媒体文件路径文本，可能重复入库；其余路径仍需核对。" : "同服务器媒体文件路径文本不同，可能是版本或映射差异；未确认有多份视频。")
 }
 public struct Server: Codable, Identifiable, Hashable {
   public let id: String

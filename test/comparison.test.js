@@ -81,6 +81,15 @@ test('同编号不同标题或电影年份提示刮削核对而不是宣称出�
 const movie = (id, title, year, providerIds = {}, serverId = 'a') => normalizeItem({ Id: id, Name: title, Type: 'Movie', ProductionYear: year, ProviderIds: providerIds }, serverId)
 const locationCache = (path, extra = {}) => ({ data: { version: 2, locations: [{ path }] }, updatedAt: new Date().toISOString(), ...extra })
 
+test('候选数量是记录配对数，三条同编号记录没有位置也不能宣称三个重复文件', () => {
+  const items = ['1', '2', '3'].map(id => movie(id, '电影甲', 2020, { Tmdb: '1' }))
+  const result = comparisonGroups(items)[0]
+  assert.equal(result.sources.length, 3)
+  assert.equal(result.comparison.counts.candidate, 3)
+  assert.equal(result.comparison.label, '同作品／同季多条记录')
+  assert.ok(result.comparison.pairs.every(pair => pair.reason.includes('需继续对照')))
+})
+
 test('同名同年但编号不同或缺失进入补充疑点，不改变去重，不推定重复', () => {
   for (const ids of [{ Tmdb: '2' }, {}]) {
     const items = [movie('1', '电影甲', 2020, { Tmdb: '1' }), movie('2', '电影甲', 2020, ids, 'b')]
