@@ -20,6 +20,9 @@ struct ComparisonView: View {
               Text("\(left.title)（\(left.serverName ?? "来源未知")）\n↔ \(right.title)（\(right.serverName ?? "来源未知")）")
                 .font(.system(size: 12, weight: .medium))
               Text(pair.reason).font(.caption).foregroundStyle(Theme.secondary)
+              ForEach(pair.basis ?? [], id: \.self) { basis in
+                Text("依据：\(basis)").font(.caption).foregroundStyle(Theme.secondary)
+              }
               if pair.kind == "candidate" {
                 Text(resourceComparison(leftServer: left.serverId, rightServer: right.serverId,
                   left: app.resources[left.key] ?? left.resources, right: app.resources[right.key] ?? right.resources))

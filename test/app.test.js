@@ -315,12 +315,13 @@ test('排查入口含编号冲突，详情按需读取各服位置并缓存，�
   const stats = f.app.service.overview().stats
   assert.equal(stats.extraEntries, stats.entries - stats.uniqueWorks)
   const groups = (await f.request('/api/library?duplicates=true&pageSize=60')).data
-  assert.equal(groups.total, stats.duplicateGroups + 1)
+  assert.equal(groups.total, stats.duplicateGroups + 2)
+  assert.equal(groups.items.filter(group => group.comparison.supplemental).length, 1)
   assert.ok(groups.items.every(group => group.sources.length > 1 && group.comparison))
   assert.equal(groups.items.filter(group => group.conflict).length, 1)
   const nextPage = (await f.request('/api/library?duplicates=true&page=2')).data
   assert.equal(nextPage.page, 2)
-  assert.equal(nextPage.items.length, 7)
+  assert.equal(nextPage.items.length, 8)
   assert.equal((await f.request(`/api/library?server=${aId}&duplicates=true`)).data.total, 0)
   const before = f.a.calls.length
   const detail = (await f.request(`/api/items/${aId}/1`)).data
@@ -512,4 +513,36 @@ test('离线排查区分不同季与同季线索，筛选分页、跨服身份�
   assert.equal(detail.duplicateSources.filter(source => source.id === '2').length, 2)
   assert.equal(detail.duplicateSources.filter(source => source.resources.locations.length).length, 2)
   assert.equal(f.a.calls.length + f.b.calls.length, calls)
+})
+
+test('编号未关联线索使用安全本地路径缓存，支持分页详情且不改变作品统计或发出请求', async t => {
+  const f = await fixture(t)
+  await f.request('/api/auth/setup', 'POST', { password: 'long-local-password' })
+  const aId = await f.connect(f.a, '影院 A')
+  const bId = await f.connect(f.b, '影院 B')
+  await f.app.service.drain()
+  f.app.service.offline = true
+  const make = (serverId, id, title, year, tmdb) => ({ id, key: `${serverId}:${id}`, serverId, title, year, type: 'Movie', providerIds: tmdb ? { tmdb } : {}, genres: [] })
+  f.app.store.saveCache(aId, 'catalog', [make(aId, '1', '同名电影', 2020, '1'), make(aId, '2', '错刮甲', 2021, '2'), make(aId, '3', '错刮乙', 2022, '3')])
+  f.app.store.saveCache(bId, 'catalog', [make(bId, '1', '同名电影', 2020, '4')])
+  for (const id of ['2', '3']) f.app.store.saveCache(aId, `resources:${id}`, { version: 2, locations: [{ path: '/media/shared.strm', label: '条目位置' }] })
+  const before = f.a.calls.length + f.b.calls.length
+  const params = '/api/library?duplicates=true&review=supplemental&pageSize=1'
+  const first = (await f.request(params)).data
+  const second = (await f.request(`${params}&page=2`)).data
+  assert.equal(first.total, 2)
+  assert.equal(second.items.length, 1)
+  assert.notEqual(first.items[0].key, second.items[0].key)
+  assert.ok(!JSON.stringify(first).includes('/media/shared.strm'))
+  assert.equal((await f.request(`/api/library?duplicates=true&review=supplemental&server=${bId}`)).data.total, 0)
+  const detail = (await f.request(`/api/items/${aId}/2`)).data
+  assert.equal(detail.comparison.supplemental, true)
+  assert.equal(detail.duplicateSources.length, 2)
+  assert.equal(detail.duplicateSources[1].resources.locations[0].path, '/media/shared.strm')
+  const overview = (await f.request('/api/overview')).data
+  assert.equal(overview.stats.uniqueWorks, 4)
+  assert.equal(overview.stats.duplicateGroups, 0)
+  f.app.store.db.prepare("UPDATE cache SET error='无权读取' WHERE serverId=? AND kind='resources:3'").run(aId)
+  assert.equal((await f.request(params)).data.total, 1)
+  assert.equal(f.a.calls.length + f.b.calls.length, before)
 })

@@ -57,4 +57,14 @@ struct ModelTests {
     #expect(resourceComparison(leftServer: "a", rightServer: "a", left: local, right: try resource("/other/video.strm", stale: true)).hasPrefix("旧缓存线索"))
     #expect(resourceComparison(leftServer: "a", rightServer: "b", left: local, right: nil).contains("证据不足"))
   }
+  @Test func testSupplementalEvidenceSurvivesDetailDecoding() throws {
+    let item = try media(["id": "a", "serverId": "s", "title": "电影", "comparison": [
+      "label": "元数据待核对", "reasons": ["编号未关联"], "counts": ["candidate": 0, "distinct": 0, "unknown": 1],
+      "hasMetadata": true, "supplemental": true, "truncated": false,
+      "pairs": [["leftKey": "s:a", "rightKey": "s:b", "kind": "unknown", "reason": "不能推定同一作品", "basis": ["完整标题及年份相同"]]]
+    ]])
+    #expect(item.comparison?.supplemental == true)
+    #expect(item.comparison?.pairs.first?.basis == ["完整标题及年份相同"])
+    #expect(item.comparison?.counts.candidate == 0)
+  }
 }

@@ -55,11 +55,12 @@ public struct MediaScope: Codable, Hashable {
 }
 public struct Comparison: Codable, Hashable {
   public struct Counts: Codable, Hashable { public let candidate: Int; public let distinct: Int; public let unknown: Int }
-  public struct Pair: Codable, Hashable { public let leftKey: String; public let rightKey: String; public let kind: String; public let reason: String }
+  public struct Pair: Codable, Hashable { public let leftKey: String; public let rightKey: String; public let kind: String; public let reason: String; public let basis: [String]? }
   public let label: String
   public let reasons: [String]
   public let counts: Counts
   public let hasMetadata: Bool
+  public let supplemental: Bool?
   public let pairs: [Pair]
   public let truncated: Bool
 }

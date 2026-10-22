@@ -16,11 +16,12 @@ struct LibraryView: View {
           Text("需核对").tag("issues")
           Text("资源重复线索").tag("resources")
           Text("元数据疑点").tag("metadata")
-          Text("季范围待确认").tag("unknown")
+          Text("待确认").tag("unknown")
+          Text("编号未关联线索").tag("supplemental")
           Text("全部关联（含不同季）").tag("all")
         }.pickerStyle(.segmented)
           .onChange(of: app.reviewFilter) { _, _ in app.libraryPage = 1; Task { await app.loadLibrary() } }
-        Text("只分析本地缓存；译名、不同版本和不完整季集都可能产生提示。提示不是删除依据，也不代表已确认刮削错误。")
+        Text("只分析本地缓存；编号未关联时，同名同年或同服文件路径相同也会提示待核对。提示不是删除依据，也不代表已确认刮削错误。")
           .font(.caption).foregroundStyle(Theme.secondary)
       }
       HStack(spacing: 16) {

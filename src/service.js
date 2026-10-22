@@ -371,13 +371,17 @@ export class Service {
   comparisons(rows, catalogs) {
     const catalog = this.collect(rows, 'catalog', catalogs)
     const children = catalog.filter(item => ['Season', 'Episode'].includes(item.type))
+    const resources = new Map()
     for (const row of rows) {
+      for (const cache of this.store.db.prepare("SELECT kind,data,updatedAt,error FROM cache WHERE serverId=? AND kind LIKE 'resources:%'").all(row.id)) {
+        resources.set(`${row.id}:${cache.kind.slice('resources:'.length)}`, { ...cache, data: JSON.parse(cache.data) })
+      }
       const cached = this.store.db.prepare("SELECT kind,data FROM cache WHERE serverId=? AND (kind LIKE 'seasons:%' OR kind LIKE 'episodes:%') AND error IS NULL").all(row.id)
       for (const cache of cached) {
         for (const item of JSON.parse(cache.data) || []) children.push({ ...item, serverId: row.id, seriesId: item.seriesId || cache.kind.slice(cache.kind.indexOf(':') + 1) })
       }
     }
-    return comparisonGroups(catalog.filter(item => ['Movie', 'Series'].includes(item.type)), children)
+    return comparisonGroups(catalog.filter(item => ['Movie', 'Series'].includes(item.type)), children, resources)
   }
   overview(serverId) {
     const rows = this.selected(serverId)

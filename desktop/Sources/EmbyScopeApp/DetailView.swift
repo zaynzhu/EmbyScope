@@ -33,7 +33,7 @@ struct DetailView: View {
           }
           VStack(alignment: .leading, spacing: 9) {
             Text("关联记录 · \(sources.count) 条").font(.headline)
-            Text("范围：全部连接的缓存。下方保留每条记录的原始标题、季范围和编号。整部剧的相同编号不代表同一季重复。")
+            Text("范围：全部连接的缓存。下方保留每条记录的原始标题、季范围和编号；补充线索不代表同一作品。整部剧的相同编号不代表同一季重复。")
               .font(.caption).foregroundStyle(Theme.secondary)
             if item.duplicateConflict == true { Text("编号冲突，当前条目保留独立，未自动归并。").font(.caption).foregroundStyle(Theme.accent) }
           }
