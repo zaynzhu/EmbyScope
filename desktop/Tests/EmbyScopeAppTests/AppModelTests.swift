@@ -89,6 +89,32 @@ struct AppModelTests {
     #expect(model.home?.playback == nil)
     #expect(!model.playbackLoading)
   }
+  @Test func changingCompatibilityModeDiscardsPreviousResponse() async throws {
+    let (model, requests) = fixture()
+    model.home = try playbackHome()
+    #expect(model.playbackCompatibility.isEmpty)
+    model.playbackCompatibility = ["zspace"]
+    let task = Task { await model.refreshPlayback(observationId: "test-observation") }
+    let request = await requests.next()
+    model.playbackCompatibility = []
+    request.respond(["ok": true, "servers": []])
+    await task.value
+    #expect(model.home?.playback == nil)
+    #expect(!model.automaticUpdates)
+  }
+  @Test func failedPlaybackReadInvalidatesPreviouslyFreshSnapshot() async throws {
+    let (model, requests) = fixture()
+    model.home = try playbackHome()
+    model.home?.playback = try JSONDecoder().decode(PlaybackResponse.self, from: JSONSerialization.data(withJSONObject: [
+      "servers": [["serverId": "a", "serverName": "模拟", "nsfw": false, "available": true, "stale": false, "sessions": []]]
+    ]))
+    let task = Task { await model.refreshPlayback() }
+    let request = await requests.next()
+    request.respond(["error": "模拟读取失败"], status: 503)
+    await task.value
+    #expect(model.home?.playback?.servers[0].stale == true)
+    #expect(model.error != nil)
+  }
 
   @Test func pageClampedByBackendUpdatesNavigation() async {
     let (model, requests) = fixture()

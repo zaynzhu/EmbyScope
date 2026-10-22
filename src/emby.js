@@ -47,14 +47,14 @@ export class EmbyClient {
     this.controller = new AbortController()
   }
   close() { this.controller.abort() }
-  async request(server, path, { token, body, image = false } = {}) {
+  async request(server, path, { token, body, image = false, mediaBrowser = false, retries = this.retries, maxBytes } = {}) {
     const url = new URL(`${server.url}${path}`)
-    for (let attempt = 0; attempt <= this.retries; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         this.controller.signal.throwIfAborted()
         return await this.limiter.run(url.origin, async () => {
           if (server.canRequest && !server.canRequest()) throw new RemoteError('自动更新已暂停', 409)
-          const authorization = `Emby Client="EmbyScope", Device="EmbyScope", DeviceId="${server.id}", Version="1.0.0"`
+          const authorization = `${mediaBrowser ? 'MediaBrowser' : 'Emby'} Client="EmbyScope", Device="EmbyScope", DeviceId="${server.id}", Version="1.0.0"`
           const headers = {
             Authorization: authorization,
             // 极影视兼容层只从此请求头读取客户端设备身份。
@@ -79,7 +79,7 @@ export class EmbyClient {
             await response.body?.cancel()
             throw new RemoteError('不支持的海报格式')
           }
-          const limit = image ? 8 * 1024 * 1024 : 32 * 1024 * 1024
+          const limit = maxBytes ?? (image ? 8 * 1024 * 1024 : 32 * 1024 * 1024)
           const chunks = []
           let size = 0
           for await (const chunk of response.body) {
@@ -94,7 +94,7 @@ export class EmbyClient {
       } catch (error) {
         if (this.controller.signal.aborted) throw new RemoteError('应用正在停止', 409)
         const retryable = !(error instanceof RemoteError) || error.status >= 500 || error.status === 429
-        if (!retryable || attempt === this.retries) throw error instanceof RemoteError ? error : new RemoteError('连接失败或请求超时')
+        if (!retryable || attempt === retries) throw error instanceof RemoteError ? error : new RemoteError('连接失败或请求超时')
         let delay = 2000 * (attempt + 1)
         if (error.retryAfter) {
           const seconds = Number(error.retryAfter)

@@ -129,8 +129,14 @@ public struct PlaybackResponse: Decodable {
     public let client: String?
     public let device: String?
     public let state: String
+    public let observedAt: String?
     public let positionTicks: Double?
     public let runtimeTicks: Double?
+    public func hasRecentActivity(at now: Date) -> Bool {
+      guard state == "activity", let observedAt,
+        let date = ISO8601DateFormatter.withMilliseconds.date(from: observedAt) else { return false }
+      return now.timeIntervalSince(date) >= 0 && now.timeIntervalSince(date) < 60
+    }
     public var progress: Double? {
       guard let positionTicks, let runtimeTicks, positionTicks.isFinite, runtimeTicks.isFinite,
         positionTicks >= 0, runtimeTicks > 0 else { return nil }
@@ -151,16 +157,31 @@ public struct PlaybackResponse: Decodable {
     public let serverName: String
     public let nsfw: Bool
     public let available: Bool
-    public let stale: Bool
+    public var stale: Bool
     public let checkedAt: String?
     public let error: String?
     public let sessions: [Session]
+    public let mode: String?
+    public let activityStatus: String?
+    public let maxAgeSeconds: Double?
+    public var isCompatibility: Bool { mode == "activity" }
+    public func activityLabel(at now: Date) -> String {
+      guard isFresh(at: now) else { return "状态未知" }
+      if activityStatus == "activity" {
+        let recent = sessions.contains { $0.hasRecentActivity(at: now) }
+        return recent ? "检测到播放活动" : "状态未知"
+      }
+      return ["warming": "观察中，等待连续样本", "no_activity": "未检测到播放活动"][activityStatus ?? ""] ?? "状态未知"
+    }
     public func isFresh(at now: Date) -> Bool {
       guard !stale, let checkedAt, let date = ISO8601DateFormatter.withMilliseconds.date(from: checkedAt) else { return false }
-      return now.timeIntervalSince(date) >= 0 && now.timeIntervalSince(date) <= 60
+      return now.timeIntervalSince(date) >= 0 && now.timeIntervalSince(date) <= (maxAgeSeconds ?? 60)
     }
   }
-  public let servers: [Source]
+  public var servers: [Source]
+  public mutating func invalidate() {
+    for index in servers.indices { servers[index].stale = true }
+  }
 }
 private extension ISO8601DateFormatter {
   static var withMilliseconds: ISO8601DateFormatter {

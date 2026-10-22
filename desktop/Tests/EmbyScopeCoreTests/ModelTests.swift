@@ -62,6 +62,27 @@ struct ModelTests {
     #expect(displayDate("not-a-date") == "时间未知")
     #expect(displayDate("2026-10-20T12:00:00.000Z") != "时间未知")
   }
+  @Test func compatibilityLabelsNeverClaimPlayingOrStoppedAndExpireLocally() throws {
+    let now = Date(timeIntervalSince1970: 1792560000)
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    func source(_ status: String, observed: Date = now, stale: Bool = false) throws -> PlaybackResponse.Source {
+      let data: [String: Any] = ["serverId": "a", "serverName": "极影视", "nsfw": false,
+        "mode": "activity", "activityStatus": status, "available": true, "stale": stale,
+        "maxAgeSeconds": 35, "checkedAt": formatter.string(from: now),
+        "sessions": status == "activity" ? [["id": "x", "itemId": "x", "title": "模拟片名", "state": "activity", "observedAt": formatter.string(from: observed)]] : []]
+      return try JSONDecoder().decode(PlaybackResponse.Source.self, from: JSONSerialization.data(withJSONObject: data))
+    }
+    #expect(try source("warming").activityLabel(at: now) == "观察中，等待连续样本")
+    #expect(try source("no_activity").activityLabel(at: now) == "未检测到播放活动")
+    #expect(try source("unknown").activityLabel(at: now) == "状态未知")
+    #expect(try source("activity").activityLabel(at: now) == "检测到播放活动")
+    #expect(try source("activity").sessions[0].progress == nil)
+    #expect(try source("activity").activityLabel(at: now.addingTimeInterval(36)) == "状态未知")
+    #expect(try source("activity", observed: now.addingTimeInterval(-60)).activityLabel(at: now) == "状态未知")
+    #expect(try source("activity", stale: true).activityLabel(at: now) == "状态未知")
+    #expect(try source("activity", observed: now.addingTimeInterval(1)).activityLabel(at: now) == "状态未知")
+  }
   @Test func testResourceEvidenceDoesNotClaimPhysicalCopies() throws {
     func resource(_ path: String, stale: Bool = false) throws -> Resources {
       try JSONDecoder().decode(Resources.self, from: JSONSerialization.data(withJSONObject: [

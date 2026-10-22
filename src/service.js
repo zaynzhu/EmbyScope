@@ -17,6 +17,7 @@ export class Service {
     this.detailJobs = new Map()
     this.resourceJobs = new Map()
     this.playbackJobs = new Map()
+    this.playbackObservers = new Map()
     this.stopping = false
   }
   updateSettings(body) {
@@ -100,6 +101,7 @@ export class Service {
   deleteServer(id) {
     if (!this.store.server(id)) throw new RemoteError('连接不存在', 404)
     this.store.db.prepare('DELETE FROM servers WHERE id=?').run(id)
+    this.playbackObservers.delete(id)
   }
   refresh(id, { full = true, automatic = false } = {}) {
     if (this.stopping || this.offline) return Promise.resolve()

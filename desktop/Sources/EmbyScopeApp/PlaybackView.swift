@@ -11,50 +11,71 @@ struct PlaybackView: View {
     live && applicationActive && scenePhase == .active && app.page == .home && app.authenticated && !app.offline && !app.demo
   }
   var body: some View {
-    TimelineView(.periodic(from: .now, by: 30)) { context in
+    TimelineView(.periodic(from: .now, by: 10)) { context in
       VStack(alignment: .leading, spacing: 12) {
         HStack {
           Label("正在观看", systemImage: "play.rectangle").font(.headline)
           Spacer()
           Toggle("实时查看", isOn: $live).toggleStyle(.switch).fixedSize()
             .disabled(app.offline || app.demo)
-          Button(app.playbackLoading ? "读取中…" : "读取当前会话") { Task { await app.refreshPlayback() } }
-            .disabled(app.offline || app.demo || app.playbackLoading)
+          Button(app.playbackLoading ? "读取中…" : "读取一次") { Task { await app.refreshPlayback() } }
+            .disabled(app.offline || app.demo || app.playbackLoading || live)
         }
-        Text(app.offline ? "离线预览，仅展示已有快照。" : live ? "前台每 10 秒读取当前账号会话；离开页面或切到后台即暂停，失败后退避。不扫描片库。" : "点击读取，或开启实时查看。支持服务端上报的各类播放器；与片库自动更新独立。")
+        Text(app.offline ? "离线预览，仅展示已有快照。" : live ? "前台每 10–15 秒读取；离开页面或切到后台即暂停，失败后退避。不扫描片库。" : "点击读取，或开启实时查看。与片库自动更新独立；兼容检测需要开启实时查看积累样本。")
           .font(.caption).foregroundStyle(Theme.secondary)
         ForEach(snapshot.servers, id: \.serverId) { source in
           let fresh = source.isFresh(at: context.date)
           VStack(alignment: .leading, spacing: 6) {
             HStack {
               Text(source.serverName).font(.subheadline.weight(.medium))
+              Toggle("兼容检测", isOn: Binding(
+                get: { app.playbackCompatibility.contains(source.serverId) },
+                set: { if $0 { app.playbackCompatibility.insert(source.serverId) } else { app.playbackCompatibility.remove(source.serverId) } }
+              )).toggleStyle(.checkbox).font(.caption)
+                .accessibilityLabel("\(source.serverName)兼容检测")
+                .disabled(app.offline || app.demo || app.playbackLoading)
+                .help("仅当前打开有效。读取此账号最多 18 条续播记录，从连续变化检测活动；不代表精确播放状态。")
               Spacer()
               Text(source.checkedAt == nil ? "尚未读取" : "上次确认 \(displayDate(source.checkedAt))\(fresh ? "" : " · 当前状态未知")")
                 .font(.caption).foregroundStyle(Theme.secondary)
             }
             if let error = source.error { Text(error).font(.caption).foregroundStyle(Theme.accent) }
-            if source.sessions.isEmpty {
+            if source.isCompatibility != app.playbackCompatibility.contains(source.serverId) {
+              Text("检测方式已切换，等待下次读取；下方为上次结果。")
+                .font(.caption).foregroundStyle(Theme.secondary)
+            }
+            if source.isCompatibility {
+              Text("兼容检测 · \(source.activityLabel(at: context.date))").font(.subheadline).foregroundStyle(Theme.accent)
+              Text("只观察当前账号返回的最多 18 条记录，列表外可能漏检。通常需至少 30 秒识别，约 60 秒无更新后结束提示；暂停与退出不区分。数据变化仅在 VidHub 实测。")
+                .font(.caption).foregroundStyle(Theme.secondary)
+            }
+            if source.sessions.isEmpty && !source.isCompatibility {
               Text(!source.available ? "没有可用的会话数据" : fresh ? "本次未返回当前账号正在播放的条目" : "仅有旧快照，需重新读取后确认")
                 .font(.caption).foregroundStyle(Theme.secondary)
             }
             ForEach(source.sessions) { session in
               VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 12) {
-                  Text(!fresh || session.state == "unknown" ? "状态未确认" : session.state == "paused" ? "已暂停" : "播放中")
-                    .font(.caption).foregroundStyle(Theme.accent).frame(width: 78, alignment: .leading)
+                  Text(source.isCompatibility ? fresh && session.hasRecentActivity(at: context.date) ? "活动线索" : "上次活动" : !fresh || session.state == "unknown" ? "状态未确认" : session.state == "paused" ? "已暂停" : "播放中")
+                    .font(.caption).foregroundStyle(Theme.accent).frame(width: 85, alignment: .leading)
                   Text(session.title).font(.subheadline).lineLimit(2)
                   Spacer()
                   Text([session.client, session.device].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(Theme.secondary).lineLimit(1)
                 }
-                if let progress = session.progress {
+                if !source.isCompatibility, let progress = session.progress {
                   ProgressView(value: progress).tint(fresh ? Theme.accent : Theme.secondary)
                 }
-                HStack {
-                  Text(fresh ? "服务端确认进度" : "上次确认进度 · 当前未知")
-                  Spacer()
-                  Text(session.progressLabel).monospacedDigit()
-                }.font(.caption).foregroundStyle(Theme.secondary)
+                if source.isCompatibility {
+                  Text("最近活动线索 \(displayDate(session.observedAt)) · 不代表确定的播放状态")
+                    .font(.caption).foregroundStyle(Theme.secondary)
+                } else {
+                  HStack {
+                    Text(fresh ? "服务端确认进度" : "上次确认进度 · 当前未知")
+                    Spacer()
+                    Text(session.progressLabel).monospacedDigit()
+                  }.font(.caption).foregroundStyle(Theme.secondary)
+                }
               }.padding(.vertical, 6)
             }
           }.padding(.vertical, 5)
@@ -63,11 +84,12 @@ struct PlaybackView: View {
     }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in applicationActive = true }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in applicationActive = false }
-    .task(id: "\(shouldPoll)-\(app.server)") {
+    .task(id: "\(shouldPoll)-\(app.server)-\(app.playbackCompatibility.sorted().joined(separator: ","))") {
       guard shouldPoll else { return }
+      let observationId = UUID().uuidString
       while !Task.isCancelled && shouldPoll {
-        await app.refreshPlayback()
-        do { try await Task.sleep(for: .seconds(10)) } catch { return }
+        await app.refreshPlayback(observationId: observationId)
+        do { try await Task.sleep(for: .seconds(app.playbackCompatibility.isEmpty ? 10 : 15)) } catch { return }
       }
     }
   }

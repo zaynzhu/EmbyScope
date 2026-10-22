@@ -1,0 +1,369 @@
+[
+  {
+    "source": "VidHub 已授权只读对照，移除真实标识与片名",
+    "samples": [
+      {
+        "phase": "baseline",
+        "index": 1,
+        "at": 1792688974766,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3180000000,
+            "lastPlayedDate": "2026-10-23T01:07:41.556Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "baseline",
+        "index": 2,
+        "at": 1792688989878,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3180000000,
+            "lastPlayedDate": "2026-10-23T01:07:41.556Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "baseline",
+        "index": 3,
+        "at": 1792689004978,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3180000000,
+            "lastPlayedDate": "2026-10-23T01:07:41.556Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "baseline",
+        "index": 4,
+        "at": 1792689020081,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3180000000,
+            "lastPlayedDate": "2026-10-23T01:07:41.556Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "playing",
+        "index": 1,
+        "at": 1792689121530,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3230000000,
+            "lastPlayedDate": "2026-10-23T01:11:59.396Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "playing",
+        "index": 2,
+        "at": 1792689136632,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3330000000,
+            "lastPlayedDate": "2026-10-23T01:12:09.327Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "playing",
+        "index": 3,
+        "at": 1792689151738,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3530000000,
+            "lastPlayedDate": "2026-10-23T01:12:29.307Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "playing",
+        "index": 4,
+        "at": 1792689166840,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 3630000000,
+            "lastPlayedDate": "2026-10-23T01:12:39.310Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "stopped",
+        "index": 1,
+        "at": 1792689227882,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4210000000,
+            "lastPlayedDate": "2026-10-23T01:13:38.043Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "stopped",
+        "index": 2,
+        "at": 1792689242984,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4210000000,
+            "lastPlayedDate": "2026-10-23T01:13:38.043Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "stopped",
+        "index": 3,
+        "at": 1792689258085,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4210000000,
+            "lastPlayedDate": "2026-10-23T01:13:38.043Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "stopped",
+        "index": 4,
+        "at": 1792689273185,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4210000000,
+            "lastPlayedDate": "2026-10-23T01:13:38.043Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "source": "VidHub 已授权只读对照，移除真实标识与片名",
+    "samples": [
+      {
+        "phase": "playing",
+        "index": 1,
+        "at": 1792689408294,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4260000000,
+            "lastPlayedDate": "2026-10-23T01:16:40.208Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "playing",
+        "index": 2,
+        "at": 1792689423436,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4460000000,
+            "lastPlayedDate": "2026-10-23T01:17:00.308Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "playing",
+        "index": 3,
+        "at": 1792689438571,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4560000000,
+            "lastPlayedDate": "2026-10-23T01:17:10.156Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "paused",
+        "index": 1,
+        "at": 1792689466268,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4800000000,
+            "lastPlayedDate": "2026-10-23T01:17:34.122Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "paused",
+        "index": 2,
+        "at": 1792689481393,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4800000000,
+            "lastPlayedDate": "2026-10-23T01:17:34.122Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "paused",
+        "index": 3,
+        "at": 1792689496495,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4800000000,
+            "lastPlayedDate": "2026-10-23T01:17:34.122Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "resumed",
+        "index": 1,
+        "at": 1792689560376,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4800000000,
+            "lastPlayedDate": "2026-10-23T01:19:10.760Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "resumed",
+        "index": 2,
+        "at": 1792689575481,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 4990000000,
+            "lastPlayedDate": "2026-10-23T01:19:30.674Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      },
+      {
+        "phase": "resumed",
+        "index": 3,
+        "at": 1792689590585,
+        "items": [
+          {
+            "id": "target",
+            "positionTicks": 5190000000,
+            "lastPlayedDate": "2026-10-23T01:19:50.691Z"
+          },
+          {
+            "id": "history",
+            "positionTicks": 13660000000,
+            "lastPlayedDate": "2026-10-17T23:00:32.211Z"
+          }
+        ]
+      }
+    ]
+  }
+]

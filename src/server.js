@@ -162,7 +162,14 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
       }
       if (path === '/api/playback/refresh' && method === 'POST') {
         const body = await readBody(request)
-        await Promise.all(service.selected(body.server).map(row => refreshPlayback(service, row)))
+        const compatibilityServers = body.compatibilityServers ?? []
+        if (!Array.isArray(compatibilityServers) || compatibilityServers.length > 30 || compatibilityServers.some(id => typeof id !== 'string') ||
+          (compatibilityServers.length && (typeof body.observationId !== 'string' || !body.observationId || body.observationId.length > 80))) {
+          throw new RemoteError('兼容检测参数无效', 400)
+        }
+        await Promise.all(service.selected(body.server).map(row => refreshPlayback(service, row, {
+          compatibility: compatibilityServers.includes(row.id), observationId: body.observationId
+        })))
         return send(response, 200, { ok: true, ...playbackSnapshot(store, service.selected(body.server), service.offline) })
       }
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))

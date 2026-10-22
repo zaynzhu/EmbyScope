@@ -30,6 +30,7 @@ final class AppModel {
   var canExitOffline = false
   var exitingOffline = false
   var playbackLoading = false
+  var playbackCompatibility: Set<String> = []
   var query = ""
   var mediaType = ""
   var reviewFilter = "issues"
@@ -99,6 +100,7 @@ final class AppModel {
     selected = nil; detail = nil; detailError = nil
     servers = []; resources = [:]; resourceErrors = [:]; resourceLoading = []
     revealed = []; revealAll = false; loadedLibraryKey = nil
+    playbackCompatibility = []
     PosterCache.shared.clear()
   }
   func report(_ failure: Error) {
@@ -229,16 +231,24 @@ final class AppModel {
       await loadScope()
     } catch { report(error) }
   }
-  func refreshPlayback() async {
+  func refreshPlayback(observationId: String = UUID().uuidString) async {
     guard let client, authenticated, !offline, !demo, !playbackLoading, !Task.isCancelled else { return }
     playbackLoading = true
     let current = generation
     let scope = server
+    let compatibility = playbackCompatibility
     defer { playbackLoading = false }
     do {
-      let snapshot: PlaybackResponse = try await client.send("api/playback/refresh", fields: ["server": scope])
-      if current == generation, scope == server, authenticated, !Task.isCancelled { home?.playback = snapshot }
-    } catch { if current == generation, !Task.isCancelled { report(error) } }
+      let snapshot: PlaybackResponse = try await client.send("api/playback/refresh", fields: [
+        "server": scope, "compatibilityServers": compatibility.sorted(), "observationId": observationId
+      ])
+      if current == generation, scope == server, compatibility == playbackCompatibility, authenticated, !Task.isCancelled { home?.playback = snapshot }
+    } catch {
+      if current == generation, scope == server, compatibility == playbackCompatibility, !Task.isCancelled {
+        home?.playback?.invalidate()
+        report(error)
+      }
+    }
   }
   func saveProxy(_ target: Server, url: String) async throws {
     guard let client else { return }
@@ -248,6 +258,7 @@ final class AppModel {
   func saveServer(id: String?, fields: [String: Any]) async throws {
     guard let client else { return }
     let _: Server = try await client.send(id.map { "api/servers/\($0)" } ?? "api/servers", method: id == nil ? "POST" : "PUT", fields: fields)
+    if let id { playbackCompatibility.remove(id) }
     PosterCache.shared.clear()
     await loadScope()
   }
@@ -255,6 +266,7 @@ final class AppModel {
     guard let client else { return }
     do {
       let _: OK = try await client.send("api/servers/\(target.id)", method: "DELETE", fields: [:])
+      playbackCompatibility.remove(target.id)
       if server == target.id { server = "all" }
       PosterCache.shared.clear(); await switchServer()
     } catch { report(error) }
