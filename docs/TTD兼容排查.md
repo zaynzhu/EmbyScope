@@ -2,6 +2,54 @@
 
 更新日期：2026-10-19。已用用户确认的 STRM 样本验证「既有极影视反代 PlaybackInfo → 媒体流 HTTP 302 → 光鸭 CDN 前 1 KB」成功。此前直接请求静态流时回退 206，不能将那次不完整的客户端流程推广为整个反代不兼容。用户常用的极影视原生播放器路由、完整解码与持续播放仍待验证。没有修改 TTD 配置、监听端口或 NAS 系统设置，没有部署适配层。
 
+## 极影视实时会话专项研究（2026-10-23）
+
+### 实测：身份有效，两种会话路径仍不可读
+
+用户明确允许最多三次 GET，并保持极影视影片播放。使用映览已保存令牌，只读打开本地配置数据库；不登录、不重试、不跟随跳转、不写缓存。请求间隔至少 2.1 秒，12 秒超时。客户端标识改为 `X-Emby-Authorization: MediaBrowser ...`，令牌仍只在 `X-Emby-Token`，不再额外发送 `Authorization: Emby ...`。
+
+| 本地时间（Asia/Shanghai） | 请求 | 结果 |
+|---|---|---|
+| 00:25:07 | `GET /emby/Users/{currentUser}` | 200 / JSON，返回 Id 与保存身份一致 |
+| 00:25:09 | `GET /Sessions` | 404 / text/plain |
+| 00:25:11 | `GET /emby/Sessions` | 404 / text/plain |
+
+有效令牌对受保护用户接口成功，排除了本轮令牌整体失效。改变身份头和路径前缀并未使会话查询可用。但三个请求不能证明极影视所有版本、原生 API 或其他授权方式均不支持实时数据；没有读取固件版本或扫描其他 NAS 接口。
+
+### 公开实现与协议证据
+
+通过 enhanced-tavily-search 检索，再直接检查作者公开源码与 Emby 官方协议：
+
+- [MoviePilot 极影视适配](https://github.com/jxxghp/MoviePilot/blob/v3/app/modules/zspace/zspace.py)：客户端统一使用 MediaBrowser 身份头和 X-Emby-Token；接口使用 `/emby/` 前缀。本轮只借鉴请求形式做对照，没有复制实现。
+- [MoviePilot 极影视模块](https://github.com/jxxghp/MoviePilot/blob/v3/app/modules/zspace/__init__.py)：`mediaserver_playing` 实际调用 `get_resume`，后者访问用户级 `Items/Resume`。名称不能作为支持实时会话的证据。
+- [Emby 官方 Playback Check-ins](https://dev.emby.media/doc/restapi/Playback-Check-ins.html)：播放器分别上报开始、进度和停止；进度请求通常每 10 秒一次，也可经 WebSocket 上报。上报能力与 `GET /Sessions` 查询能力是两个独立问题。
+- [TTD 官方仓库](https://github.com/walkingddd/TgtoDrive)：公开源目录仍为旧版；本轮公开检索没有找到运行版按反代规则查询进度的实现证据。不能据此断言运行版一定没有相关接口。
+
+### 日志：已出现真正的进度上报请求
+
+用户另行允许 TTD 网页日志最多两批读取。通过 kimi-webbridge 读取运行前端确认日志接口与偏移机制，再读取一次初始日志（16 行）与一次增量（0 行）。初始批有 2 行 PlaybackInfo，无 Sessions 事件；未改变日志级别或配置，任务 session 已关闭。网页应用日志不等同于容器 HTTP 访问日志。
+
+用户随后提供容器访问日志：
+
+| 时间 | 请求（去查询参数） | 响应 |
+|---|---|---|
+| 00:31:59 | `POST /emby/Sessions/Playing/Progress` | 204，响应体 0 字节 |
+| 00:32:09 | `POST /emby/Sessions/Playing/Progress` | 204，响应体 0 字节 |
+
+这证明这段测试期间发生了周期性进度上报，并得到成功 HTTP 响应。日志没有监听端口、规则 ID、请求正文或上游独立状态，不能仅凭这两行证明归属 19000、读取 PositionTicks，或证明极影视保存并对外暴露了状态。用户测试上下文指向极影视，但仍需保留这项证据限制。
+
+同一批大量 `GET /api/logs` 是日志页面读取，不是播放心跳；不作为观看次数、设备数或进度。用户另一段 19:51 的 PlaybackInfo 日志说明当时成功生成直链（direct=1），与本次 00:31 的实时进度查询不是同一个证据。
+
+### 可执行的后续边界
+
+1. 停止继续猜会话 URL；已经确认的两个路径不可读。
+2. 优先查 TTD 是否已有按反代规则暴露的、经过认证的实时状态接口或受支持的事件扩展点。不能将绑定原 Emby 的 `/api/emby/live` 直接充当极影视来源。
+3. 若必须从进度上报提取状态，先取得限定字段的真实样本：规则归属、已验证用户、播放会话/设备、ItemId、PositionTicks、IsPaused、接收时间，以及开始/停止事件。普通访问日志缺少正文，当前不能直接实现真实进度。
+4. 接入必须保持原身份校验和转发行为，按服务器、用户、会话隔离；观察失败不能影响播放；超时状态变未知，不能凭时间线持续伪造播放。
+5. 没有受支持的读取方式前，不修改 TTD、重启容器、替换端口或加入强制经过映览的新代理。直接 8021 或极影视原生协议的播放也不能假设都经过 TTD。
+
+本轮交付是诊断证据与下一步边界，未实现极影视实时看板，也没有修改任何远端设置。
+
 ## 实时播放对照（2026-10-22）
 
 用户确认最初失败样本是普通媒体而非 STRM，并已自行验证三种云盘 STRM 均能播放；不再将该样本归因于多反代端口冲突。光鸭曾出现的 `HTTP 400 / code=4126 / The refresh token is incorrect or expired` 属于当次云盘取链失败，不是 Emby 用户令牌失效的证据。
