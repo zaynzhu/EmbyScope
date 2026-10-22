@@ -35,13 +35,14 @@ async function readBody(request) {
   } catch { throw new RemoteError('请求格式错误', 400) }
 }
 
-export function createApp({ dataDir = process.env.DATA_DIR || './data', client, scheduler = true, offline = false, desktopKey, cacheMinutes = Number(process.env.CACHE_MINUTES) || 60, secureCookie = process.env.COOKIE_SECURE === 'true' } = {}) {
+export function createApp({ dataDir = process.env.DATA_DIR || './data', client, scheduler = true, offline = false, onExitOffline, desktopKey, cacheMinutes = Number(process.env.CACHE_MINUTES) || 60, secureCookie = process.env.COOKIE_SECURE === 'true' } = {}) {
   const store = new Store(dataDir)
   const service = new Service(store, client || new EmbyClient({
     interval: Math.max(2000, Number(process.env.REQUEST_INTERVAL_MS) || 2000),
     timeout: Math.min(60000, Math.max(1000, Number(process.env.REQUEST_TIMEOUT_MS) || 12000)),
     retries: Math.min(2, Math.max(0, Number(process.env.REQUEST_RETRIES ?? 1) || 0))
   }), { cacheMinutes: Math.max(5, cacheMinutes), offline })
+  const appSettings = () => ({ ...service.settings(), canExitOffline: service.offline && typeof onExitOffline === 'function' })
   const failures = new Map()
   const cookie = (token, maxAge) => `embyscope=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secureCookie ? '; Secure' : ''}`
   const send = (response, status, data, extra = {}) => {
@@ -133,10 +134,20 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         // 独立的本地关联操作：忽略其他输入，离线时也不触发登录或同步。
         return send(response, 200, service.saveServer({ name: row.name, url: row.url, proxyUrl: body.proxyUrl }, row.id))
       }
-      if (offline && method !== 'GET') throw new RemoteError('离线预览只读取本地缓存，请退出离线模式后修改配置或更新', 409)
+      if (path === '/api/settings/exit-offline' && method === 'POST') {
+        const body = await readBody(request)
+        if (body.confirm !== true) throw new RemoteError('请确认退出离线预览', 400)
+        if (typeof onExitOffline !== 'function') throw new RemoteError('此运行模式不能退出离线预览', 409)
+        if (service.offline) {
+          onExitOffline(store)
+          service.offline = false
+        }
+        return send(response, 200, appSettings())
+      }
+      if (service.offline && method !== 'GET') throw new RemoteError('离线预览只读取本地缓存，请退出离线模式后修改配置或更新', 409)
       if (path === '/api/servers' && method === 'GET') return send(response, 200, service.listServers())
-      if (path === '/api/settings' && method === 'GET') return send(response, 200, service.settings())
-      if (path === '/api/settings' && method === 'PUT') return send(response, 200, service.updateSettings(await readBody(request)))
+      if (path === '/api/settings' && method === 'GET') return send(response, 200, appSettings())
+      if (path === '/api/settings' && method === 'PUT') { service.updateSettings(await readBody(request)); return send(response, 200, appSettings()) }
       if (path === '/api/servers' && method === 'POST') return send(response, 201, service.saveServer(await readBody(request)))
       const connection = path.match(/^\/api\/servers\/([a-f0-9-]+)$/)
       if (connection && method === 'PUT') return send(response, 200, service.saveServer(await readBody(request), connection[1]))
@@ -155,7 +166,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return send(response, 200, { ok: true })
       }
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))
-      if (path === '/api/home' && method === 'GET') return send(response, 200, { ...homeSnapshot(store, service.selected(url.searchParams.get('server'))), playback: playbackSnapshot(store, service.selected(url.searchParams.get('server')), offline) })
+      if (path === '/api/home' && method === 'GET') return send(response, 200, { ...homeSnapshot(store, service.selected(url.searchParams.get('server'))), playback: playbackSnapshot(store, service.selected(url.searchParams.get('server')), service.offline) })
       if (path === '/api/library' && method === 'GET') return send(response, 200, service.library(url.searchParams))
       const item = path.match(/^\/api\/items\/([a-f0-9-]+)\/([^/]+)(\/(?:poster|resources))?$/)
       if (item && method === 'GET') {
@@ -179,7 +190,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
   })
   server.requestTimeout = 30000
   server.headersTimeout = 10000
-  const timer = scheduler && !offline ? setInterval(() => service.tick(), 30000) : null
+  const timer = scheduler ? setInterval(() => service.tick(), 30000) : null
   timer?.unref()
   if (scheduler && !offline) service.tick()
   return { server, store, service, async close() {

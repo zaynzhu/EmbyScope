@@ -175,7 +175,7 @@ public struct OverviewResponse: Decodable {
   public let resume: [Media]
 }
 public struct AuthStatus: Decodable { public let initialized: Bool; public let authenticated: Bool }
-public struct AppSettings: Codable { public var automaticUpdates: Bool; public var offline: Bool? }
+public struct AppSettings: Codable { public var automaticUpdates: Bool; public var offline: Bool?; public var canExitOffline: Bool? }
 public struct OK: Decodable { public let ok: Bool }
 
 public func displayDate(_ value: String?) -> String {

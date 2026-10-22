@@ -7,6 +7,7 @@ struct SettingsView: View {
   @State private var showEditor = false
   @State private var deleting: Server?
   @State private var confirmFull = false
+  @State private var confirmOnline = false
   @State private var proxyTarget: Server?
   var body: some View {
     ScrollView {
@@ -14,6 +15,17 @@ struct SettingsView: View {
         SectionTitle(title: "服务器与更新", subtitle: "凭据加密存于本机，远端媒体库只读。")
         if app.demo { Text("当前为隔离演示模式。退出后正常打开应用，才能配置你的服务器。").font(.callout).foregroundStyle(Theme.accent) }
         VStack(alignment: .leading, spacing: 16) {
+          if app.offline {
+            Label("当前处于离线预览", systemImage: "wifi.slash").font(.headline).foregroundStyle(Theme.accent)
+            Text("自动更新开关因此不可用。退出离线预览后可以手动更新，自动更新仍保持关闭。").font(.caption).foregroundStyle(Theme.secondary)
+            if app.canExitOffline {
+              Button(app.exitingOffline ? "正在退出…" : "退出离线预览…") { confirmOnline = true }.disabled(app.demo || app.exitingOffline)
+            } else {
+              Text("当前运行模式强制离线，不能在此解除。").font(.caption).foregroundStyle(Theme.secondary)
+            }
+          } else {
+            Label("正常模式 · 允许按需联网", systemImage: "network").font(.headline)
+          }
           Toggle("自动更新", isOn: Binding(get: { app.automaticUpdates }, set: { enabled in Task { await app.setAutomaticUpdates(enabled) } })).toggleStyle(.switch).disabled(app.demo || app.offline)
           Text(app.offline ? "离线预览中，更新与连接修改已禁用；详情和海报仅从本机缓存读取。" : app.automaticUpdates ? "按各服务器周期更新，窗口失焦不会触发额外刷新。" : "已暂停。打开应用、切页和切换服务器只读取缓存；详情与海报可能按需请求。")
             .font(.caption).foregroundStyle(Theme.secondary)
@@ -50,6 +62,10 @@ struct SettingsView: View {
       }.padding(30).frame(maxWidth: 1050).frame(maxWidth: .infinity)
     }
     .sheet(item: $proxyTarget) { ProxyEditor(server: $0) }
+    .alert("退出离线预览？", isPresented: $confirmOnline) {
+      Button("取消", role: .cancel) {}
+      Button("退出，保持自动更新关闭") { Task { await app.exitOffline() } }
+    } message: { Text("退出操作本身不更新片库。之后手动更新、详情和海报可能访问已配置的服务器；自动更新仍关闭，不会立即扫库。") }
     .sheet(isPresented: $showEditor) { ServerEditor(server: editing) }
     .alert("删除这个连接？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
       Button("取消", role: .cancel) { deleting = nil }

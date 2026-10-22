@@ -16,7 +16,7 @@ private final class FixtureProtocol: URLProtocol, @unchecked Sendable {
     callback?(self)
   }
   override func stopLoading() {}
-  func respond(_ object: [String: Any], status: Int = 200) {
+  func respond(_ object: Any, status: Int = 200) {
     let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
     client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: object))
@@ -141,5 +141,47 @@ struct AppModelTests {
     await task.value
     #expect(model.detail == nil)
     #expect(!model.detailLoading)
+  }
+  @Test func exitingOfflineKeepsAutomaticUpdatesOffAndOnlyReloadsLocalSnapshots() async {
+    let (model, requests) = fixture()
+    model.offline = true
+    model.canExitOffline = true
+    model.page = .settings
+    let task = Task { await model.exitOffline() }
+    let exit = await requests.next()
+    #expect(exit.request.url?.path == "/api/settings/exit-offline")
+    #expect(exit.request.httpMethod == "POST")
+    exit.respond(["automaticUpdates": false, "offline": false, "canExitOffline": false])
+    let servers = await requests.next()
+    #expect(servers.request.url?.path == "/api/servers")
+    #expect(servers.request.httpMethod == "GET")
+    servers.respond([])
+    let settings = await requests.next()
+    #expect(settings.request.url?.path == "/api/settings")
+    settings.respond(["automaticUpdates": false, "offline": false, "canExitOffline": false])
+    let home = await requests.next()
+    #expect(home.request.url?.path == "/api/home")
+    home.respond(["recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "模拟"])
+    let overview = await requests.next()
+    #expect(overview.request.url?.path == "/api/overview")
+    overview.respond(["servers": [], "stats": ["complete": false, "historyReason": "模拟"], "views": [], "latest": [], "resume": []])
+    await task.value
+    #expect(!model.offline)
+    #expect(!model.automaticUpdates)
+    #expect(!model.canExitOffline)
+    #expect(!model.exitingOffline)
+    #expect(model.error == nil)
+  }
+  @Test func failedExitKeepsOfflineAndReportsError() async {
+    let (model, requests) = fixture()
+    model.offline = true
+    model.canExitOffline = true
+    let task = Task { await model.exitOffline() }
+    let request = await requests.next()
+    request.respond(["error": "无法保存模式"], status: 409)
+    await task.value
+    #expect(model.offline)
+    #expect(!model.exitingOffline)
+    #expect(model.error == "无法保存模式")
   }
 }

@@ -46,7 +46,7 @@ export async function copyDataDirectory(sourceDirectory, destinationDirectory, {
     if (!key.equals(readFileSync(join(source, 'secret.key')))) throw new Error('复制期间密钥变化，请重试')
     if (offlinePreview) {
       copiedDb.exec("BEGIN; DELETE FROM sessions; INSERT OR REPLACE INTO settings VALUES('automaticUpdates','false'); COMMIT")
-      writeFileSync(join(stage, 'offline-preview'), '离线导入预览：退出应用后移除此文件才能允许远端读取。\n', { mode: 0o600, flag: 'wx' })
+      writeFileSync(join(stage, 'offline-preview'), '离线导入预览：请在应用服务器设置中确认退出离线预览，退出后自动更新仍关闭。\n', { mode: 0o600, flag: 'wx' })
     } else if (existsSync(join(source, 'offline-preview'))) {
       writeFileSync(join(stage, 'offline-preview'), '离线预览\n', { mode: 0o600, flag: 'wx' })
     }

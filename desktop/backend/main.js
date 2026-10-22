@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 import { createApp } from '../../src/server.js'
 import { RemoteError } from '../../src/emby.js'
 import { seedDemo } from './demo.js'
+import { exitOfflinePreview } from './offline-mode.js'
 
 process.umask(0o077)
 // 启动凭据只走匿名管道，不放入命令行、环境变量或落盘。
@@ -35,7 +36,9 @@ try {
 } catch { process.exit(1) }
 const demoClient = { request: async () => { throw new RemoteError('演示模式不访问外部服务', 403) }, login: async () => { throw new RemoteError('演示模式不连接服务器', 403) } }
 const offline = !!config.offline || existsSync(join(config.dataDir, 'offline-preview'))
-const app = createApp({ dataDir: config.dataDir, desktopKey: config.key, scheduler: !config.demo, offline, client: config.demo ? demoClient : undefined, secureCookie: false })
+const app = createApp({ dataDir: config.dataDir, desktopKey: config.key, scheduler: !config.demo, offline,
+  onExitOffline: !config.demo && !config.offline ? store => exitOfflinePreview(store, config.dataDir) : undefined,
+  client: config.demo ? demoClient : undefined, secureCookie: false })
 if (config.demo) seedDemo(app.store, config.artwork)
 let closing = false
 async function shutdown() {

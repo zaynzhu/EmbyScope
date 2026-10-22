@@ -27,6 +27,8 @@ final class AppModel {
   var library: LibraryResponse?
   var automaticUpdates = false
   var offline = false
+  var canExitOffline = false
+  var exitingOffline = false
   var playbackLoading = false
   var query = ""
   var mediaType = ""
@@ -118,6 +120,7 @@ final class AppModel {
       guard current == generation else { return }
       servers = updatedServers; automaticUpdates = settings.automaticUpdates
       offline = settings.offline == true
+      canExitOffline = settings.canExitOffline == true
       home = snapshot; overview = stats; error = nil
       loadedLibraryKey = nil
       if page == .library || page == .duplicates { await loadLibrary() }
@@ -206,6 +209,18 @@ final class AppModel {
   func setAutomaticUpdates(_ enabled: Bool) async {
     guard let client else { return }
     do { let settings: AppSettings = try await client.send("api/settings", method: "PUT", fields: ["automaticUpdates": enabled]); automaticUpdates = settings.automaticUpdates } catch { report(error) }
+  }
+  func exitOffline() async {
+    guard let client, offline, canExitOffline, !exitingOffline, !demo else { return }
+    exitingOffline = true
+    defer { exitingOffline = false }
+    do {
+      let settings: AppSettings = try await client.send("api/settings/exit-offline", fields: ["confirm": true])
+      offline = settings.offline == true
+      canExitOffline = settings.canExitOffline == true
+      automaticUpdates = settings.automaticUpdates
+      await loadScope()
+    } catch { report(error) }
   }
   func refresh(full: Bool) async {
     guard let client else { return }
