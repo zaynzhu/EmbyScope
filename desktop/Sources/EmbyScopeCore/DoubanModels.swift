@@ -32,6 +32,14 @@ public struct DoubanList: Decodable {
 }
 public struct DoubanStatus: Decodable {
   public struct Posters: Decodable {
+    public struct S3: Decodable {
+      public let endpoint: String
+      public let bucket: String
+      public let region: String
+      public let credentialsConfigured: Bool
+      public let configured: Bool
+    }
+    public let s3: S3?
     public struct Run: Decodable {
       public let state: String
       public let total: Int

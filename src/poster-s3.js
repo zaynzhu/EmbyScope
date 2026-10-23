@@ -5,12 +5,17 @@ const sha256 = value => createHash('sha256').update(value).digest('hex')
 const hmac = (key, value) => createHmac('sha256', key).update(value).digest()
 
 export function validateS3(config) {
+  if (!config || typeof config !== 'object') throw new Error('S3 配置无效')
+  for (const field of ['endpoint', 'bucket', 'accessKey', 'secretKey']) {
+    if (typeof config[field] !== 'string' || !config[field].trim() || config[field].length > 2048 || /[\r\n]/.test(config[field])) throw new Error('S3 配置不完整或格式无效')
+  }
+  if (config.region != null && (typeof config.region !== 'string' || !/^[a-z0-9-]{1,64}$/.test(config.region))) throw new Error('S3 区域格式无效')
   let url
   try { url = new URL(config.endpoint) } catch { throw new Error('S3 端点无效') }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('S3 端点必须为不含路径和凭据的 HTTP(S) 地址')
   if (url.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|10\.[\d.]+|192\.168\.[\d.]+|172\.(1[6-9]|2\d|3[01])\.[\d.]+|[a-z\d.-]+\.local)$/.test(url.hostname)) throw new Error('S3 公网端点必须使用 HTTPS')
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(config.bucket) || !config.accessKey || !config.secretKey) throw new Error('S3 配置不完整')
-  return { ...config, endpoint: url.origin, region: config.region || 'us-east-1' }
+  return { endpoint: url.origin, bucket: config.bucket, accessKey: config.accessKey, secretKey: config.secretKey, region: config.region || 'us-east-1' }
 }
 
 // 移植 WhatShot 的 SigV4/path-style 签名，凭据不出本机 API，也不跟随重定向。
@@ -34,6 +39,35 @@ export class PosterS3 {
     this.service = service
     const row = service.store.db.prepare("SELECT value FROM settings WHERE name='posterS3'").get()
     this.config = row ? validateS3(service.store.decrypt(row.value)) : null
+  }
+  settings() {
+    return { endpoint: this.config?.endpoint || '', bucket: this.config?.bucket || '', region: this.config?.region || 'us-east-1',
+      credentialsConfigured: !!this.config, configured: !!this.config }
+  }
+  configure(input) {
+    if (this.service.offline() || this.service.stopping) throw new RemoteError('当前模式不能修改 S3 配置', 409)
+    if (this.service.job || this.service.posters.job || this.service.posterJobs.size) throw new RemoteError('请等待海报读取或豆瓣任务结束后再修改 S3 配置', 409)
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RemoteError('S3 配置格式无效', 400)
+    const draft = { endpoint: input.endpoint, bucket: input.bucket, region: input.region || 'us-east-1',
+      accessKey: input.accessKey === '' || input.accessKey === undefined ? this.config?.accessKey : input.accessKey,
+      secretKey: input.secretKey === '' || input.secretKey === undefined ? this.config?.secretKey : input.secretKey }
+    let next
+    try { next = validateS3(draft) } catch (error) { throw new RemoteError(error.message, 400) }
+    const destinationChanged = !!this.config && (next.endpoint !== this.config.endpoint || next.bucket !== this.config.bucket)
+    if (destinationChanged && (!input.accessKey || !input.secretKey)) throw new RemoteError('更换端点或桶时，请重新填写两项密钥，避免把旧凭据发送到新地址', 400)
+    const db = this.service.store.db
+    // 对象键属于原桶；换桶时只重建本地引用，保留远端对象与本地图片。
+    if (destinationChanged && db.prepare('SELECT count(*) AS n FROM douban_poster_mirrors m WHERE NOT EXISTS(SELECT 1 FROM douban_images c WHERE c.id=m.id)').get().n) {
+      throw new RemoteError('原桶仍有未缓存到本地的海报，请先完成补图再更换端点或桶', 409)
+    }
+    db.exec('BEGIN')
+    try {
+      db.prepare("INSERT INTO settings VALUES('posterS3',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value").run(this.service.store.encrypt(next))
+      if (destinationChanged) db.prepare('DELETE FROM douban_poster_mirrors').run()
+      db.exec('COMMIT')
+      this.config = next
+    } catch (error) { db.exec('ROLLBACK'); throw error }
+    return this.settings()
   }
   async request(method, key, signal, bytes, mime) {
     const config = this.config

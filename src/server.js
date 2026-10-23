@@ -179,6 +179,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
       if (path === '/api/douban/cancel' && method === 'POST') return send(response, 200, douban.cancel())
       if (path === '/api/douban/posters/fill' && method === 'POST') { douban.posters.start(); return send(response, 202, douban.status()) }
       if (path === '/api/douban/posters/cancel' && method === 'POST') { douban.posters.cancel(); return send(response, 200, douban.status()) }
+      if (path === '/api/douban/posters/settings' && method === 'PUT') { douban.s3.configure(await readBody(request)); return send(response, 200, douban.status()) }
       const doubanPoster = path.match(/^\/api\/douban\/items\/(\d{1,20})\/poster$/)
       if (doubanPoster && method === 'GET') {
         const image = await douban.poster(doubanPoster[1])

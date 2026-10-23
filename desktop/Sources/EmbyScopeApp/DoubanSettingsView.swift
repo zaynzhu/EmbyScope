@@ -5,6 +5,7 @@ struct DoubanSettingsView: View {
   @Environment(AppModel.self) private var app
   @State private var account = ""
   @State private var confirmFull = false
+  @State private var editingS3 = false
   private var disabled: Bool { app.offline || app.demo || app.douban.saving || app.douban.status?.syncing == true || app.douban.status?.posters?.running == true || app.douban.status == nil }
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -54,6 +55,10 @@ struct DoubanSettingsView: View {
           if posters.pendingMirror > 0 { Text("本地另有 \(posters.pendingMirror) 张尚未上传 S3，点击补全可重试上传。").font(.caption).foregroundStyle(Theme.accent) }
           Text(posters.s3Configured ? "S3 已配置 · 新图片下载后上传至映览独立目录，本机保留缓存。" : "图片下载后保存在映览本机数据库，尚未配置 S3。")
             .font(.caption).foregroundStyle(Theme.secondary)
+          if let s3 = posters.s3, s3.configured {
+            Text("端点：\(s3.endpoint)\n桶：\(s3.bucket) · 区域：\(s3.region)").font(.caption).foregroundStyle(Theme.secondary).textSelection(.enabled)
+          }
+          Button(posters.s3Configured ? "编辑 S3 配置…" : "配置 S3 存储…") { editingS3 = true }.disabled(disabled)
           HStack {
             Button("补全缺失海报") { posterAction("fill") }.disabled(disabled || (posters.missing == 0 && posters.pendingMirror == 0))
             if posters.running {
@@ -76,6 +81,7 @@ struct DoubanSettingsView: View {
         .font(.caption).foregroundStyle(Theme.secondary)
     }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
       .onChange(of: app.douban.status?.account, initial: true) { _, value in if let value { account = value } }
+      .sheet(isPresented: $editingS3) { S3PosterSettingsView() }
       .alert("全量同步豆瓣已看？", isPresented: $confirmFull) {
         Button("取消", role: .cancel) {}
         Button("开始全量同步") { start("full") }
@@ -86,5 +92,63 @@ struct DoubanSettingsView: View {
   }
   private func posterAction(_ action: String) {
     Task { if let client = app.client { await app.douban.action(client, path: "api/douban/posters/\(action)") } }
+  }
+}
+
+private struct S3PosterSettingsView: View {
+  @Environment(AppModel.self) private var app
+  @Environment(\.dismiss) private var dismiss
+  @State private var endpoint = ""
+  @State private var bucket = ""
+  @State private var region = "us-east-1"
+  @State private var accessKey = ""
+  @State private var secretKey = ""
+  @State private var error: String?
+  private var existing: DoubanStatus.Posters.S3? { app.douban.status?.posters?.s3 }
+  private var destinationChanged: Bool {
+    guard let existing, existing.configured else { return false }
+    return endpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")) != existing.endpoint || bucket.trimmingCharacters(in: .whitespacesAndNewlines) != existing.bucket
+  }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 18) {
+      Text("S3 海报存储配置").font(.title3.weight(.semibold))
+      Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 14) {
+        GridRow { Text("端点"); TextField("https://s3.example.com", text: $endpoint) }
+        GridRow { Text("桶名"); TextField("海报存储桶", text: $bucket) }
+        GridRow { Text("区域"); TextField("us-east-1", text: $region) }
+        GridRow { Text("Access Key"); SecureField(existing?.credentialsConfigured == true ? "已配置，留空保留" : "填写 Access Key", text: $accessKey) }
+        GridRow { Text("Secret Key"); SecureField(existing?.credentialsConfigured == true ? "已配置，留空保留" : "填写 Secret Key", text: $secretKey) }
+      }.textFieldStyle(.roundedBorder)
+      Text("密钥加密保存在映览本机，不显示已有明文。保存只更新本地配置，不发起连接测试或补图。").font(.caption).foregroundStyle(Theme.secondary)
+      if destinationChanged {
+        Text("更换端点或桶需重填两项密钥。原桶图片会保留，本地缓存可继续显示；之后通过“补全缺失海报”上传到新桶。").font(.caption).foregroundStyle(Theme.accent)
+      }
+      if let error { Text(error).font(.caption).foregroundStyle(Theme.accent) }
+      HStack {
+        Spacer()
+        Button("取消") { dismiss() }.disabled(app.douban.saving)
+        Button("保存配置") { save() }.buttonStyle(GoldButton())
+          .disabled(app.douban.saving || endpoint.isEmpty || bucket.isEmpty || ((destinationChanged || existing?.credentialsConfigured != true) && (accessKey.isEmpty || secretKey.isEmpty)))
+      }
+    }.padding(28).frame(width: 580).background(Theme.background)
+      .interactiveDismissDisabled(app.douban.saving)
+      .onAppear {
+        endpoint = existing?.endpoint ?? ""
+        bucket = existing?.bucket ?? ""
+        region = existing?.region ?? "us-east-1"
+      }
+  }
+  private func save() {
+    Task {
+      guard let client = app.client else { return }
+      await app.douban.action(client, path: "api/douban/posters/settings", method: "PUT", fields: [
+        "endpoint": endpoint.trimmingCharacters(in: .whitespacesAndNewlines),
+        "bucket": bucket.trimmingCharacters(in: .whitespacesAndNewlines),
+        "region": region.trimmingCharacters(in: .whitespacesAndNewlines),
+        "accessKey": accessKey, "secretKey": secretKey
+      ])
+      if let failure = app.douban.statusError { error = failure }
+      else { accessKey = ""; secretKey = ""; dismiss() }
+    }
   }
 }

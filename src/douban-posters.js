@@ -35,7 +35,7 @@ export class DoubanPosters {
     const cached = this.store.db.prepare('SELECT count(*) AS n FROM douban_images').get().n
     const mirrored = this.store.db.prepare('SELECT count(*) AS n FROM douban_poster_mirrors').get().n
     const pendingMirror = this.service.s3.config ? this.store.db.prepare('SELECT count(*) AS n FROM douban_images c WHERE NOT EXISTS(SELECT 1 FROM douban_poster_mirrors m WHERE m.id=c.id)').get().n : 0
-    return { missing, cached, mirrored, pendingMirror, s3Configured: !!this.service.s3.config, running: !!this.job, lastRun: this.run }
+    return { missing, cached, mirrored, pendingMirror, s3Configured: !!this.service.s3.config, s3: this.service.s3.settings(), running: !!this.job, lastRun: this.run }
   }
   start() {
     if (this.service.stopping || this.service.offline()) throw new RemoteError('离线模式不能补全海报', 409)

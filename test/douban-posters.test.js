@@ -201,3 +201,49 @@ test('详情403停止且不尝试另一路径，之前未匹配条目跳过重�
   assert.deepEqual(paths, ['/rexxar/api/v2/movie/1'])
   assert.equal(f.service.status().posters.lastRun.state, 'failed')
 })
+
+test('S3设置读出不泄露凭据，空密钥保留、修改即时生效并在重启后持久化', async t => {
+  const f = fixture(t, true)
+  let calls = 0
+  f.service.fetchImpl = async () => { calls++; throw Error('配置不应联网') }
+  const result = f.service.s3.configure({ endpoint: config.endpoint + '/', bucket: config.bucket, region: 'eu-west-1', accessKey: '', secretKey: '' })
+  assert.equal(result.endpoint, config.endpoint)
+  assert.equal(result.credentialsConfigured, true)
+  assert.equal(JSON.stringify(result).includes('TEST_ACCESS'), false)
+  assert.equal(JSON.stringify(f.service.status()).includes('TEST_SECRET'), false)
+  assert.equal(f.service.s3.config.accessKey, config.accessKey)
+  assert.equal(f.service.s3.config.region, 'eu-west-1')
+  assert.equal(calls, 0)
+  const restarted = new DoubanService(f.store)
+  assert.equal(restarted.s3.config.secretKey, config.secretKey)
+  assert.equal(restarted.s3.config.region, 'eu-west-1')
+  await restarted.close()
+})
+
+test('S3换桶不复用旧凭据或错误对象引用，保留本地图片并进入待上传', async t => {
+  const f = fixture(t, true)
+  f.store.db.prepare('INSERT INTO douban_poster_mirrors VALUES(?,?)').run('1', 'posters/99.jpg')
+  const draft = { ...config, endpoint: 'https://new-storage.example', bucket: 'new-posters' }
+  assert.throws(() => f.service.s3.configure({ ...draft, accessKey: '', secretKey: '' }), /重新填写/)
+  assert.throws(() => f.service.s3.configure(draft), /未缓存到本地/)
+  assert.equal(f.service.s3.config.endpoint, config.endpoint)
+  f.store.db.prepare('INSERT INTO douban_images VALUES(?,?,?,?)').run('1', 's3:posters/99.jpg', 'image/png', png)
+  f.service.s3.configure(draft)
+  assert.equal(f.service.status().posters.mirrored, 0)
+  assert.equal(f.service.status().posters.pendingMirror, 1)
+  assert.deepEqual(Buffer.from((await f.service.poster('1')).buffer), png)
+  assert.equal(f.service.status().checkpoint, '2026-10-11')
+})
+
+test('S3设置无效输入、离线和进行中的图片任务拒绝修改，失败保留旧配置', async t => {
+  const f = fixture(t, true)
+  for (const input of [null, [], { ...config, accessKey: 123 }, { ...config, secretKey: 'bad\nkey' }, { ...config, region: 'bad/region' }, { ...config, endpoint: 'http://public.example' }]) {
+    assert.throws(() => f.service.s3.configure(input))
+    assert.equal(f.service.s3.config.endpoint, config.endpoint)
+  }
+  f.service.posterJobs.set('1', Promise.resolve())
+  assert.throws(() => f.service.s3.configure(config), /等待/)
+  f.service.posterJobs.clear()
+  f.service.offline = () => true
+  assert.throws(() => f.service.s3.configure(config), /当前模式/)
+})

@@ -175,5 +175,17 @@ test('豆瓣API遵循桌面认证、来源校验和离线边界', async t => {
   assert.equal((await fetch(base + '/api/douban/items', { headers })).status, 200)
   assert.equal((await fetch(base + '/api/douban/sync', { method: 'POST', headers: { ...headers, Origin: 'https://evil.example' }, body: '{"mode":"full"}' })).status, 403)
   assert.equal((await fetch(base + '/api/douban/sync', { method: 'POST', headers, body: '{"mode":"full"}' })).status, 409)
+  const path = base + '/api/douban/posters/settings'
+  const body = JSON.stringify({ endpoint: 'https://storage.example', bucket: 'posters', region: 'us-east-1', accessKey: 'FIXTURE_ACCESS', secretKey: 'FIXTURE_SECRET' })
+  assert.equal((await fetch(path, { method: 'PUT', body })).status, 403)
+  assert.equal((await fetch(path, { method: 'PUT', headers: { ...headers, Origin: 'https://evil.example' }, body })).status, 403)
+  assert.equal((await fetch(path, { method: 'PUT', headers, body })).status, 409)
+  app.service.offline = false
+  const saved = await fetch(path, { method: 'PUT', headers, body })
+  assert.equal(saved.status, 200)
+  const status = await saved.json()
+  assert.equal(status.posters.s3.configured, true)
+  assert.equal(JSON.stringify(status).includes('FIXTURE_'), false)
+  assert.equal(app.douban.s3.config.secretKey, 'FIXTURE_SECRET')
   assert.equal(calls, 0)
 })
