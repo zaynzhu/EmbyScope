@@ -78,6 +78,7 @@ public struct Dataset: Codable, Hashable {
   public let updatedAt: String?
   public let error: String?
   public let stale: Bool
+  public let warning: String?
 }
 
 public func resourceComparison(leftServer: String, rightServer: String, left: Resources?, right: Resources?) -> String {
@@ -105,6 +106,19 @@ public func resourceComparison(leftServer: String, rightServer: String, left: Re
   return prefix + (shared ? "同服务器存在重合的媒体文件路径文本，可能重复入库；其余路径仍需核对。" : "同服务器媒体文件路径文本不同，可能是版本或映射差异；未确认有多份视频。")
 }
 public struct Server: Codable, Identifiable, Hashable {
+  public struct CatalogProgress: Codable, Hashable {
+    public let directories: Int
+    public let discovered: Int
+    public let items: Int
+  }
+  public struct EpisodeSync: Codable, Hashable {
+    public let completed: Int
+    public let series: Int
+    public let failed: Int
+    public let knownEpisodes: Int
+    public let syncing: Bool
+    public let stale: Bool
+  }
   public let id: String
   public let name: String
   public let url: String
@@ -115,6 +129,9 @@ public struct Server: Codable, Identifiable, Hashable {
   public let lightMinutes: Int
   public let fullHours: Int
   public let syncing: Bool
+  public let attemptedAt: String?
+  public let catalogProgress: CatalogProgress?
+  public let episodeSync: EpisodeSync?
   public let datasets: [String: Dataset]
   public var statusLabel: String {
     if syncing { return "正在更新" }

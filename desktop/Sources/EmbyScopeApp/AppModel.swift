@@ -23,6 +23,8 @@ final class AppModel {
   var page: Page = .home
   var server = "all"
   var servers: [Server] = []
+  var serverStatusError: String?
+  private var serverStatusGeneration = 0
   var home: HomeResponse?
   var overview: OverviewResponse?
   var library: LibraryResponse?
@@ -97,6 +99,7 @@ final class AppModel {
   }
   private func clearSession() {
     generation += 1
+    serverStatusError = nil
     detailGeneration += 1
     authenticated = false
     loading = false
@@ -114,6 +117,7 @@ final class AppModel {
   func loadScope() async {
     guard let client else { return }
     generation += 1
+    serverStatusGeneration += 1
     let current = generation
     let scope = server
     loading = true
@@ -131,6 +135,22 @@ final class AppModel {
       loadedLibraryKey = nil
       if page == .library || page == .duplicates { await loadLibrary() }
     } catch { if current == generation { report(error) } }
+  }
+  func loadServerStatus() async {
+    guard let client, authenticated, !Task.isCancelled else { return }
+    serverStatusGeneration += 1
+    let request = serverStatusGeneration
+    let scopeGeneration = generation
+    do {
+      let updated: [Server] = try await client.get("api/servers")
+      guard !Task.isCancelled, authenticated, request == serverStatusGeneration, scopeGeneration == generation else { return }
+      servers = updated
+      serverStatusError = nil
+    } catch {
+      guard !Task.isCancelled, authenticated, request == serverStatusGeneration, scopeGeneration == generation else { return }
+      serverStatusError = "本地状态读取失败，以下保留上次结果：\(error.localizedDescription)"
+      if let failure = error as? APIError, failure.status == 401 { clearSession() }
+    }
   }
   func switchServer() async {
     closeDetail()

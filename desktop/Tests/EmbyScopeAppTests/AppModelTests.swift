@@ -63,6 +63,39 @@ struct AppModelTests {
       "recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "保留首页内容"
     ]))
   }
+  @Test func serverStatusReadsOnlyLocalStateAndPreservesItOnFailure() async throws {
+    let (model, requests) = fixture()
+    model.automaticUpdates = true
+    model.home = try playbackHome()
+    let task = Task { await model.loadServerStatus() }
+    let request = await requests.next()
+    #expect(request.request.url?.path == "/api/servers")
+    #expect(request.request.httpMethod == "GET")
+    request.respond([["id": "a", "name": "模拟服务器", "url": "http://example.invalid", "status": "online", "nsfw": false,
+      "lightMinutes": 60, "fullHours": 24, "syncing": false, "attemptedAt": "2026-10-23T05:13:00.000Z", "datasets": [:]]])
+    await task.value
+    #expect(model.servers.first?.attemptedAt == "2026-10-23T05:13:00.000Z")
+    #expect(model.automaticUpdates)
+    #expect(model.home?.historyNote == "保留首页内容")
+    let failing = Task { await model.loadServerStatus() }
+    let failedRequest = await requests.next()
+    failedRequest.respond(["error": "模拟本地读取失败"], status: 500)
+    await failing.value
+    #expect(model.servers.first?.id == "a")
+    #expect(model.serverStatusError?.contains("保留上次结果") == true)
+  }
+  @Test func olderServerStatusCannotOverwriteNewerRead() async {
+    let (model, requests) = fixture()
+    let old = Task { await model.loadServerStatus() }
+    let oldRequest = await requests.next()
+    let new = Task { await model.loadServerStatus() }
+    let newRequest = await requests.next()
+    newRequest.respond([])
+    await new.value
+    oldRequest.respond(["error": "过时的错误"], status: 500)
+    await old.value
+    #expect(model.serverStatusError == nil)
+  }
   @Test func passwordSettingUsesLocalEndpointAndRetainsStateOnFailure() async throws {
     let (model, requests) = fixture()
     let task = Task { try await model.setPasswordRequired(true, password: "fixture-password") }

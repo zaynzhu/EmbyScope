@@ -3,6 +3,24 @@ import Testing
 @testable import EmbyScopeCore
 
 struct ModelTests {
+  @Test func serverUpdateMetadataKeepsAttemptsSeparateFromSuccessfulCache() throws {
+    var fields: [String: Any] = ["id": "s", "name": "模拟", "url": "http://example.invalid", "status": "offline",
+      "nsfw": false, "lightMinutes": 60, "fullHours": 24, "syncing": false,
+      "datasets": ["catalog": ["available": true, "updatedAt": "2026-10-22T02:00:00.000Z", "stale": true, "error": "请求超时"]]]
+    let old = try JSONDecoder().decode(Server.self, from: JSONSerialization.data(withJSONObject: fields))
+    #expect(old.attemptedAt == nil)
+    #expect(old.catalogProgress == nil)
+    #expect(old.episodeSync == nil)
+    fields["attemptedAt"] = "2026-10-23T02:00:00.000Z"
+    fields["catalogProgress"] = ["directories": 3, "discovered": 8, "items": 12]
+    fields["episodeSync"] = ["completed": 20, "series": 40, "failed": 2, "knownEpisodes": 100, "syncing": true, "stale": true]
+    let server = try JSONDecoder().decode(Server.self, from: JSONSerialization.data(withJSONObject: fields))
+    #expect(server.attemptedAt != server.datasets["catalog"]?.updatedAt)
+    #expect(server.datasets["catalog"]?.error == "请求超时")
+    #expect(server.catalogProgress?.items == 12)
+    #expect(server.episodeSync?.syncing == true)
+    #expect(server.episodeSync?.failed == 2)
+  }
   func media(_ fields: [String: Any]) throws -> Media {
     try JSONDecoder().decode(Media.self, from: JSONSerialization.data(withJSONObject: fields))
   }
