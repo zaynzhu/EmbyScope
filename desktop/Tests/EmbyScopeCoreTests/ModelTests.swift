@@ -3,6 +3,13 @@ import Testing
 @testable import EmbyScopeCore
 
 struct ModelTests {
+  @Test func doubanImportedCommentIsPreservedAndIdenticalIntroIsFlagged() throws {
+    let data: [String: Any] = ["id": "123", "type": "Movie", "title": "测试电影", "comment": "导演 / 年份", "intro": "导演 / 年份"]
+    let item = try JSONDecoder().decode(DoubanItem.self, from: JSONSerialization.data(withJSONObject: data))
+    #expect(item.commentNeedsReview)
+    #expect(item.comment == "导演 / 年份")
+    #expect(item.ratingLabel == "未评分")
+  }
   @Test func serverUpdateMetadataKeepsAttemptsSeparateFromSuccessfulCache() throws {
     var fields: [String: Any] = ["id": "s", "name": "模拟", "url": "http://example.invalid", "status": "offline",
       "nsfw": false, "lightMinutes": 60, "fullHours": 24, "syncing": false,

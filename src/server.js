@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { randomBytes, scrypt, timingSafeEqual, createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { Store } from './store.js'
+import { DoubanService } from './douban.js'
 import { Service } from './service.js'
 import { EmbyClient, RemoteError } from './emby.js'
 import { homeSnapshot } from './home.js'
@@ -35,13 +36,14 @@ async function readBody(request) {
   } catch { throw new RemoteError('请求格式错误', 400) }
 }
 
-export function createApp({ dataDir = process.env.DATA_DIR || './data', client, scheduler = true, offline = false, onExitOffline, desktopKey, cacheMinutes = Number(process.env.CACHE_MINUTES) || 60, secureCookie = process.env.COOKIE_SECURE === 'true' } = {}) {
+export function createApp({ dataDir = process.env.DATA_DIR || './data', client, doubanOptions, scheduler = true, offline = false, onExitOffline, desktopKey, cacheMinutes = Number(process.env.CACHE_MINUTES) || 60, secureCookie = process.env.COOKIE_SECURE === 'true' } = {}) {
   const store = new Store(dataDir)
   const service = new Service(store, client || new EmbyClient({
     interval: Math.max(2000, Number(process.env.REQUEST_INTERVAL_MS) || 2000),
     timeout: Math.min(60000, Math.max(1000, Number(process.env.REQUEST_TIMEOUT_MS) || 12000)),
     retries: Math.min(2, Math.max(0, Number(process.env.REQUEST_RETRIES ?? 1) || 0))
   }), { cacheMinutes: Math.max(5, cacheMinutes), offline })
+  const douban = new DoubanService(store, { ...doubanOptions, offline: () => service.offline })
   const appSettings = () => ({ ...service.settings(), canExitOffline: service.offline && typeof onExitOffline === 'function' })
   const failures = new Map()
   const cookie = (token, maxAge) => `embyscope=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${secureCookie ? '; Secure' : ''}`
@@ -170,6 +172,17 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return send(response, 200, appSettings())
       }
       if (service.offline && method !== 'GET') throw new RemoteError('离线预览只读取本地缓存，请退出离线模式后修改配置或更新', 409)
+      if (path === '/api/douban/status' && method === 'GET') return send(response, 200, douban.status())
+      if (path === '/api/douban/items' && method === 'GET') return send(response, 200, douban.list(url.searchParams))
+      if (path === '/api/douban/settings' && method === 'PUT') return send(response, 200, douban.configure(await readBody(request)))
+      if (path === '/api/douban/sync' && method === 'POST') return send(response, 202, douban.start((await readBody(request)).mode))
+      if (path === '/api/douban/cancel' && method === 'POST') return send(response, 200, douban.cancel())
+      const doubanPoster = path.match(/^\/api\/douban\/items\/(\d{1,20})\/poster$/)
+      if (doubanPoster && method === 'GET') {
+        const image = await douban.poster(doubanPoster[1])
+        response.writeHead(200, { 'Content-Type': image.mime })
+        return response.end(image.buffer)
+      }
       if (path === '/api/servers' && method === 'GET') return send(response, 200, service.listServers())
       if (path === '/api/settings' && method === 'GET') return send(response, 200, appSettings())
       if (path === '/api/settings' && method === 'PUT') { service.updateSettings(await readBody(request)); return send(response, 200, appSettings()) }
@@ -225,10 +238,11 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
   const timer = scheduler ? setInterval(() => service.tick(), 30000) : null
   timer?.unref()
   if (scheduler && !offline) service.tick()
-  return { server, store, service, async close() {
+  return { server, store, service, douban, async close() {
     clearInterval(timer)
     service.stopping = true
     service.client.close?.()
+    await douban.close()
     await new Promise(resolve => server.close(resolve))
     await service.drain()
     store.close()

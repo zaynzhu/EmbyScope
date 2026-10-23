@@ -63,6 +63,42 @@ struct AppModelTests {
       "recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "保留首页内容"
     ]))
   }
+  @Test func doubanPaginationFailureKeepsOriginalPageAndRetryPosition() async {
+    let (model, requests) = fixture()
+    let first = Task { await model.douban.load(model.client!) }
+    let firstRequest = await requests.next()
+    #expect(firstRequest.request.url?.path == "/api/douban/items")
+    firstRequest.respond(["items": [["id": "1", "type": "Movie", "title": "原记录"]], "total": 30, "page": 1, "pages": 2])
+    await first.value
+    let next = Task { await model.douban.load(model.client!, page: 2) }
+    let nextRequest = await requests.next()
+    nextRequest.respond(["error": "分页失败"], status: 500)
+    await next.value
+    #expect(model.douban.result?.page == 1)
+    #expect(model.douban.result?.items.first?.title == "原记录")
+    #expect(model.douban.error == "分页失败")
+    #expect(model.douban.retryPage == 2)
+  }
+  @Test func doubanOldSearchAndClearedSessionCannotOverwriteNewResults() async {
+    let (model, requests) = fixture()
+    let old = Task { await model.douban.load(model.client!) }
+    let oldRequest = await requests.next()
+    model.douban.query = "新搜索"
+    let new = Task { await model.douban.load(model.client!, clearResults: true) }
+    let newRequest = await requests.next()
+    newRequest.respond(["items": [["id": "2", "type": "Unknown", "title": "新结果"]], "total": 1, "page": 1, "pages": 1])
+    await new.value
+    oldRequest.respond(["error": "过时的错误"], status: 500)
+    await old.value
+    #expect(model.douban.result?.items.first?.title == "新结果")
+    #expect(model.douban.error == nil)
+    let pending = Task { await model.douban.load(model.client!) }
+    let pendingRequest = await requests.next()
+    model.douban.clear()
+    pendingRequest.respond(["items": [], "total": 0, "page": 1, "pages": 1])
+    await pending.value
+    #expect(model.douban.result == nil)
+  }
   @Test func serverStatusReadsOnlyLocalStateAndPreservesItOnFailure() async throws {
     let (model, requests) = fixture()
     model.automaticUpdates = true

@@ -88,6 +88,7 @@ private struct RootView: View {
             case .home: HomeView()
             case .overview: OverviewView()
             case .library, .duplicates: LibraryView()
+            case .douban: DoubanView()
             case .settings: SettingsView()
             }
           }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -140,6 +141,7 @@ private struct RootView: View {
         Text("全部服务器").tag("all")
         ForEach(app.servers) { server in Text(server.name).tag(server.id) }
       }.labelsHidden().frame(width: 166)
+        .disabled(app.page == .douban)
         .onChange(of: app.server) { _, _ in Task { await app.switchServer() } }
     }.padding(.horizontal, 26).frame(height: 65)
   }

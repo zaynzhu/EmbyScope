@@ -60,6 +60,7 @@ struct SettingsView: View {
           }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
         }
         if app.servers.isEmpty { EmptyState(title: "添加你的第一台服务器", message: "填写服务器地址与普通 Emby 账号即可，不需要管理员 API Key。") }
+        DoubanSettingsView()
         Toggle("减少界面动效", isOn: Binding(get: { app.reduceMotion }, set: { app.reduceMotion = $0 })).toggleStyle(.switch)
         VStack(alignment: .leading, spacing: 12) {
           Toggle("打开映览时需要密码", isOn: Binding(get: { app.passwordRequired }, set: { enabled in
@@ -85,6 +86,7 @@ struct SettingsView: View {
       guard shouldReadStatus else { return }
       while !Task.isCancelled && shouldReadStatus {
         await app.loadServerStatus()
+        if let client = app.client, !app.douban.saving { await app.douban.loadStatus(client) }
         do { try await Task.sleep(for: .seconds(5)) } catch { return }
       }
     }

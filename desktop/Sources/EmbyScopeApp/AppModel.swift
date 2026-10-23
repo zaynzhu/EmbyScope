@@ -3,14 +3,15 @@ import Observation
 import EmbyScopeCore
 
 enum Page: String, CaseIterable {
-  case home = "此刻", overview = "概览", library = "片库", duplicates = "重复与刮削排查", settings = "服务器设置"
+  case home = "此刻", overview = "概览", library = "片库", douban = "豆瓣已看", duplicates = "重复与刮削排查", settings = "服务器设置"
   var symbol: String {
-    switch self { case .home: "sparkles.tv"; case .overview: "square.grid.2x2"; case .library: "rectangle.stack"; case .duplicates: "square.on.square"; case .settings: "externaldrive" }
+    switch self { case .home: "sparkles.tv"; case .overview: "square.grid.2x2"; case .library: "rectangle.stack"; case .douban: "checkmark.seal"; case .duplicates: "square.on.square"; case .settings: "externaldrive" }
   }
 }
 
 @MainActor @Observable
 final class AppModel {
+  let douban = DoubanModel()
   let backend = BackendProcess()
   let demo = CommandLine.arguments.contains("--demo")
   var client: APIClient?
@@ -98,6 +99,7 @@ final class AppModel {
     } catch { report(error) }
   }
   private func clearSession() {
+    douban.clear()
     generation += 1
     serverStatusError = nil
     detailGeneration += 1
@@ -116,6 +118,11 @@ final class AppModel {
   }
   func loadScope() async {
     guard let client else { return }
+    if page == .douban {
+      await douban.loadStatus(client)
+      await douban.load(client, page: douban.result?.page ?? 1)
+      return
+    }
     generation += 1
     serverStatusGeneration += 1
     let current = generation
