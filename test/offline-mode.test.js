@@ -25,6 +25,7 @@ async function fixture(t, { canExit = true, brokenMarker = false } = {}) {
   const app = createApp({ dataDir: root, offline: true, client, desktopKey: 'fixture-desktop-key',
     onExitOffline: canExit ? store => exitOfflinePreview(store, root) : undefined })
   t.after(async () => { await app.close(); rmSync(root, { recursive: true, force: true }) })
+  app.store.db.prepare("INSERT INTO settings VALUES('desktopPasswordRequired','true')").run()
   seedDemo(app.store)
   for (const row of app.store.servers()) {
     app.store.db.prepare('UPDATE servers SET fullHours=0,attemptedAt=NULL,secret=? WHERE id=?')
@@ -43,7 +44,7 @@ async function fixture(t, { canExit = true, brokenMarker = false } = {}) {
   return { app, root, marker, calls, request, origin, headers }
 }
 
-test('退出离线需要管理员和来源校验，明确确认后持久化，自动更新关闭且不联网', async t => {
+test('启用密码锁时退出离线需要管理员和来源校验，明确确认后持久化，自动更新关闭且不联网', async t => {
   const f = await fixture(t)
   const before = f.app.store.db.prepare('SELECT * FROM cache').all()
   const endpoint = '/api/settings/exit-offline'

@@ -15,6 +15,7 @@ final class AppModel {
   let demo = CommandLine.arguments.contains("--demo")
   var client: APIClient?
   var initialized = false
+  var passwordRequired = false
   var authenticated = false
   var starting = true
   var loading = false
@@ -65,11 +66,7 @@ final class AppModel {
       let status: AuthStatus = try await client.get("api/auth/status")
       initialized = status.initialized
       authenticated = status.authenticated
-      if demo {
-        let _: OK = try await client.send("api/auth/setup", fields: ["password": UUID().uuidString])
-        initialized = true
-        authenticated = true
-      }
+      passwordRequired = status.passwordRequired ?? true
       if authenticated { await loadScope() }
     } catch { report(error) }
     starting = false
@@ -84,8 +81,15 @@ final class AppModel {
       await loadScope()
     } catch { report(error) }
   }
-  func lock() async {
+  func setPasswordRequired(_ enabled: Bool, password: String = "") async throws {
     guard let client else { return }
+    let status: AuthStatus = try await client.send("api/auth/desktop-lock", method: "PUT", fields: ["enabled": enabled, "password": password])
+    passwordRequired = status.passwordRequired ?? true
+    initialized = status.initialized
+    authenticated = status.authenticated
+  }
+  func lock() async {
+    guard passwordRequired, let client else { return }
     do {
       let _: OK = try await client.send("api/auth/logout", fields: [:])
       clearSession()

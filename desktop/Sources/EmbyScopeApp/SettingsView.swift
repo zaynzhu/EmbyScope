@@ -8,6 +8,9 @@ struct SettingsView: View {
   @State private var confirmFull = false
   @State private var confirmOnline = false
   @State private var proxyTarget: Server?
+  @State private var showPasswordSetup = false
+  @State private var savingPasswordSetting = false
+  @State private var passwordSettingError: String?
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 26) {
@@ -56,10 +59,27 @@ struct SettingsView: View {
         }
         if app.servers.isEmpty { EmptyState(title: "添加你的第一台服务器", message: "填写服务器地址与普通 Emby 账号即可，不需要管理员 API Key。") }
         Toggle("减少界面动效", isOn: Binding(get: { app.reduceMotion }, set: { app.reduceMotion = $0 })).toggleStyle(.switch)
-        Button("锁定映览") { Task { await app.lock() } }.disabled(app.demo)
+        VStack(alignment: .leading, spacing: 12) {
+          Toggle("打开映览时需要密码", isOn: Binding(get: { app.passwordRequired }, set: { enabled in
+            if enabled { showPasswordSetup = true }
+            else {
+              savingPasswordSetting = true
+              Task {
+                do { try await app.setPasswordRequired(false); passwordSettingError = nil }
+                catch { passwordSettingError = error.localizedDescription }
+                savingPasswordSetting = false
+              }
+            }
+          })).toggleStyle(.switch).disabled(app.demo || savingPasswordSetting)
+          Text(app.passwordRequired ? "已开启。下次打开或手动锁定后，需要本机密码解锁。" : "默认关闭，打开后直接进入首页。开启时可设置密码；已有密码会保留。")
+            .font(.caption).foregroundStyle(Theme.secondary)
+          if app.passwordRequired { Button("锁定映览") { Task { await app.lock() } }.disabled(app.demo || savingPasswordSetting) }
+          if let passwordSettingError { Text(passwordSettingError).font(.caption).foregroundStyle(Theme.accent) }
+        }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
         Text("当前界面不播放视频、不代理流媒体、不修改远端文件。最近观看仅来自账号最后播放时间，尚未接入完整历史。").font(.caption).foregroundStyle(Theme.secondary)
       }.padding(30).frame(maxWidth: 1050).frame(maxWidth: .infinity)
     }
+    .sheet(isPresented: $showPasswordSetup) { PasswordLockEditor() }
     .sheet(item: $proxyTarget) { ProxyEditor(server: $0) }
     .alert("退出离线预览？", isPresented: $confirmOnline) {
       Button("取消", role: .cancel) {}
@@ -162,5 +182,37 @@ private struct ProxyEditor: View {
       }
     }.padding(30).frame(width: 510).background(Theme.background)
       .onAppear { address = server.proxyUrl ?? "" }
+  }
+}
+
+private struct PasswordLockEditor: View {
+  @Environment(AppModel.self) private var app
+  @Environment(\.dismiss) private var dismiss
+  @State private var password = ""
+  @State private var confirmation = ""
+  @State private var saving = false
+  @State private var error: String?
+  var body: some View {
+    VStack(alignment: .leading, spacing: 18) {
+      Text("开启启动密码").font(.title2.bold())
+      Text(app.initialized ? "请输入原本的本机密码，确认后开启。它不是 Emby 账号密码。" : "设置本机密码，之后打开映览时用它解锁。")
+        .font(.callout).foregroundStyle(Theme.secondary)
+      SecureField(app.initialized ? "原本的本机密码" : "密码（12 至 256 个字符）", text: $password)
+      if !app.initialized { SecureField("再次输入密码", text: $confirmation) }
+      if let error { Text(error).font(.caption).foregroundStyle(Theme.accent) }
+      HStack {
+        Spacer()
+        Button("取消") { dismiss() }.disabled(saving)
+        Button(saving ? "正在开启…" : "确认开启") {
+          saving = true
+          Task {
+            do { try await app.setPasswordRequired(true, password: password); password = ""; confirmation = ""; dismiss() }
+            catch { self.error = error.localizedDescription }
+            saving = false
+          }
+        }.buttonStyle(GoldButton()).disabled(saving || password.count < 12 || password.count > 256 || (!app.initialized && password != confirmation))
+      }
+    }.padding(30).frame(width: 450).background(Theme.background)
+      .interactiveDismissDisabled(saving)
   }
 }

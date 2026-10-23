@@ -22,9 +22,10 @@ test('首页仅采用有效最后播放时间，保留跨服身份和最新快�
   assert.ok(empty.emptyReason)
 })
 
-test('桌面启动密钥不替代管理员认证，动态端口仍校验请求来源', async t => {
+test('启用密码锁时桌面启动密钥不替代管理员认证，动态端口仍校验请求来源', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'embyscope-desktop-test-'))
   const app = createApp({ dataDir: dir, scheduler: false, desktopKey: 'a'.repeat(64) })
+  app.store.db.prepare("INSERT INTO settings VALUES('desktopPasswordRequired','true')").run()
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve))
   t.after(async () => {
     await app.close()

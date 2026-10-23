@@ -63,6 +63,28 @@ struct AppModelTests {
       "recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "保留首页内容"
     ]))
   }
+  @Test func passwordSettingUsesLocalEndpointAndRetainsStateOnFailure() async throws {
+    let (model, requests) = fixture()
+    let task = Task { try await model.setPasswordRequired(true, password: "fixture-password") }
+    let request = await requests.next()
+    #expect(request.request.url?.path == "/api/auth/desktop-lock")
+    #expect(request.request.httpMethod == "PUT")
+    request.respond(["initialized": true, "authenticated": true, "passwordRequired": true])
+    try await task.value
+    #expect(model.passwordRequired)
+    #expect(model.initialized)
+    let failing = Task { try await model.setPasswordRequired(false) }
+    let failedRequest = await requests.next()
+    failedRequest.respond(["error": "模拟失败"], status: 500)
+    do { try await failing.value; Issue.record("失败不应成功返回") } catch {}
+    #expect(model.passwordRequired)
+    #expect(model.authenticated)
+  }
+  @Test func lockingWithoutPasswordDoesNotHideHome() async {
+    let (model, _) = fixture()
+    await model.lock()
+    #expect(model.authenticated)
+  }
   @Test func playbackUpdatesOnlyItsSnapshotWithoutReloadingCatalog() async throws {
     let (model, requests) = fixture()
     model.home = try playbackHome()

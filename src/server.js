@@ -53,12 +53,23 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
     const token = (request.headers.cookie || '').match(/(?:^|;\s*)embyscope=([a-f0-9]{64})(?:;|$)/)?.[1]
     return token ? digest(token) : ''
   }
-  const authenticated = request => !!store.db.prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?').get(sessionHash(request), Date.now())
+  const passwordRequired = () => !desktopKey || store.db.prepare("SELECT value FROM settings WHERE name='desktopPasswordRequired'").get()?.value === 'true'
+  const authenticated = request => (desktopKey && !passwordRequired()) || !!store.db.prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?').get(sessionHash(request), Date.now())
   const createSession = response => {
     const token = randomBytes(32).toString('hex')
     store.db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now())
     store.db.prepare('INSERT INTO sessions VALUES(?,?)').run(digest(token), Date.now() + SESSION_AGE)
     response.setHeader('Set-Cookie', cookie(token, SESSION_AGE / 1000))
+  }
+  const checkPasswordAttempt = request => {
+    const ip = request.socket.remoteAddress
+    const now = Date.now()
+    for (const [key, entry] of failures) if (entry.until < now) failures.delete(key)
+    const entry = failures.get(ip) || { count: 0, until: now + 15 * 60000 }
+    if (entry.count >= 10) throw new RemoteError('尝试次数过多，请 15 分钟后重试', 429)
+    entry.count++
+    failures.set(ip, entry)
+    return ip
   }
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
@@ -66,7 +77,7 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
     response.setHeader('Cache-Control', 'no-store')
     response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
     try {
-      // 桌面辅助进程额外绑定启动它的客户端；原有管理员与来源校验仍然生效。
+      // 桌面辅助进程额外绑定启动它的客户端；密码锁关闭时仍必须通过管道密钥和来源校验。
       if (desktopKey) {
         const provided = request.headers['x-embyscope-desktop'] || ''
         const expected = Buffer.from(desktopKey)
@@ -92,16 +103,10 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         if (!originMatches || request.headers['x-embyscope'] !== '1' || !request.headers['content-type']?.startsWith('application/json')) throw new RemoteError('请求来源校验失败', 403)
       }
       if (method === 'GET' && path === '/api/auth/status') {
-        return send(response, 200, { initialized: !!store.db.prepare('SELECT id FROM admin').get(), authenticated: authenticated(request) })
+        return send(response, 200, { initialized: !!store.db.prepare('SELECT id FROM admin').get(), authenticated: !!authenticated(request), passwordRequired: passwordRequired() })
       }
       if (method === 'POST' && ['/api/auth/setup', '/api/auth/login'].includes(path)) {
-        const ip = request.socket.remoteAddress
-        const now = Date.now()
-        for (const [key, entry] of failures) if (entry.until < now) failures.delete(key)
-        const entry = failures.get(ip) || { count: 0, until: now + 15 * 60000 }
-        if (entry.count >= 10) throw new RemoteError('尝试次数过多，请 15 分钟后重试', 429)
-        entry.count++
-        failures.set(ip, entry)
+        const ip = checkPasswordAttempt(request)
         const body = await readBody(request)
         if (typeof body.password !== 'string' || body.password.length < 12 || body.password.length > 256) throw new RemoteError('管理员密码需为 12 至 256 个字符', 400)
         const admin = store.db.prepare('SELECT hash FROM admin WHERE id=1').get()
@@ -120,6 +125,26 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return send(response, 200, { ok: true })
       }
       if (!authenticated(request)) throw new RemoteError('请先登录', 401)
+      if (method === 'PUT' && path === '/api/auth/desktop-lock') {
+        if (!desktopKey) throw new RemoteError('页面不存在', 404)
+        const body = await readBody(request)
+        if (typeof body.enabled !== 'boolean') throw new RemoteError('密码开关参数无效', 400)
+        if (body.enabled) {
+          const ip = checkPasswordAttempt(request)
+          if (typeof body.password !== 'string' || body.password.length < 12 || body.password.length > 256) throw new RemoteError('本机密码需为 12 至 256 个字符', 400)
+          const admin = store.db.prepare('SELECT hash FROM admin WHERE id=1').get()
+          const hash = await passwordHash(body.password, admin?.hash.split(':')[0])
+          if (admin && !timingSafeEqual(Buffer.from(hash), Buffer.from(admin.hash))) throw new RemoteError('密码错误，请输入原本的本机密码', 401)
+          // 哈希计算期间配置可能已改变，不能覆盖其他请求设置的密码或锁。
+          if (store.db.prepare('SELECT hash FROM admin WHERE id=1').get()?.hash !== admin?.hash || !authenticated(request)) throw new RemoteError('认证状态已改变，请重新操作', 409)
+          if (!admin) store.db.prepare('INSERT INTO admin VALUES(1,?)').run(hash)
+          failures.delete(ip)
+        }
+        store.db.prepare("INSERT INTO settings VALUES('desktopPasswordRequired', ?) ON CONFLICT(name) DO UPDATE SET value=excluded.value").run(JSON.stringify(body.enabled))
+        store.db.prepare('DELETE FROM sessions').run()
+        createSession(response)
+        return send(response, 200, { initialized: !!store.db.prepare('SELECT id FROM admin').get(), authenticated: true, passwordRequired: body.enabled })
+      }
       if (method === 'POST' && path === '/api/auth/logout') {
         store.db.prepare('DELETE FROM sessions WHERE hash=?').run(sessionHash(request))
         response.setHeader('Set-Cookie', cookie('', 0))
