@@ -1,5 +1,7 @@
 import { RateLimiter, RemoteError } from './emby.js'
 import { parseDoubanPage, validDoubanDate } from './douban-parser.js'
+import { DoubanPosters } from './douban-posters.js'
+import { PosterS3 } from './poster-s3.js'
 
 export function readDoubanState(store) {
   const value = store.db.prepare("SELECT value FROM settings WHERE name='doubanState'").get()?.value
@@ -16,6 +18,7 @@ export function allowedPoster(value) {
   } catch { return false }
 }
 export function imageMime(bytes) {
+  bytes = Buffer.from(bytes)
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
   if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png'
   if (bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP') return 'image/webp'
@@ -33,6 +36,8 @@ export class DoubanService {
     this.stopping = false
     this.posterJobs = new Map()
     this.posterController = new AbortController()
+    this.s3 = new PosterS3(this)
+    this.posters = new DoubanPosters(this, { allowed: allowedPoster, imageMime })
     const state = readDoubanState(store)
     if (state.lastRun?.state === 'running') {
       state.lastRun = { ...state.lastRun, state: 'interrupted', error: '上次同步因应用退出中断，原数据和同步日期已保留', finishedAt: new Date().toISOString() }
@@ -42,7 +47,7 @@ export class DoubanService {
   status() {
     const state = readDoubanState(this.store)
     const counts = Object.fromEntries(this.store.db.prepare('SELECT type,count(*) AS count FROM douban_items GROUP BY type').all().map(row => [row.type, row.count]))
-    return { ...state, total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+    return { ...state, posters: this.posters.status(), total: Object.values(counts).reduce((sum, count) => sum + count, 0),
       movies: counts.Movie || 0, series: counts.Series || 0, unknown: counts.Unknown || 0,
       syncing: !!this.job, offline: this.offline(), canIncremental: !!state.account && validDoubanDate(state.checkpoint) }
   }
@@ -69,6 +74,7 @@ export class DoubanService {
     if (!['full', 'incremental'].includes(mode)) throw new RemoteError('请选择全量或增量同步', 400)
     if (this.stopping || this.offline()) throw new RemoteError('离线模式不能同步豆瓣', 409)
     if (this.job) throw new RemoteError('豆瓣同步正在进行', 409)
+    if (this.posters.job) throw new RemoteError('请先等待海报补全结束或停止补图', 409)
     const state = readDoubanState(this.store)
     if (!state.account) throw new RemoteError('请先设置豆瓣账号', 400)
     if (mode === 'incremental' && !validDoubanDate(state.checkpoint)) throw new RemoteError('缺少有效的增量进度，请先完成全量同步', 409)
@@ -85,23 +91,26 @@ export class DoubanService {
     return this.status()
   }
   cancel() { this.controller?.abort(); return this.status() }
-  async read(url, signal, { image = false } = {}) {
+  async read(url, signal, { image = false, json = false, missingIsNull = false } = {}) {
     const service = new URL(url).hostname === 'image.tmdb.org' ? 'tmdb-images' : 'douban'
     return this.limiter.run(service, async () => {
       signal.throwIfAborted()
       if (this.offline() || this.stopping) throw new RemoteError('当前模式不允许联网', 409)
       const response = await this.fetchImpl(url, { redirect: 'manual',
         signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
-        headers: { Accept: image ? 'image/*' : 'text/html,application/xhtml+xml',
-          'Accept-Language': 'zh-CN,zh;q=0.9', 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.6 Safari/605.1.15' } })
+        headers: { Accept: image ? 'image/*' : json ? 'application/json' : 'text/html,application/xhtml+xml',
+          ...(image && service === 'douban' ? { Referer: 'https://movie.douban.com/' } : {}),
+          'Accept-Language': 'zh-CN,zh;q=0.9', 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.6 Safari/605.1.15',
+          ...(new URL(url).hostname === 'm.douban.com' ? { Referer: 'https://m.douban.com/tv', 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148' } : {}) } })
       if (!response.ok) {
         await response.body?.cancel()
-        throw new RemoteError([401, 403, 429].includes(response.status) ? '豆瓣限制访问或需要登录验证，已停止，请稍后在浏览器检查' : '豆瓣返回异常或重定向，已停止读取', 502)
+        if (missingIsNull && response.status === 404) return null
+        throw new RemoteError([401, 403, 429].includes(response.status) ? `豆瓣限制访问或需要登录验证（HTTP ${response.status}），已停止，请稍后在浏览器检查` : `豆瓣返回异常或重定向（HTTP ${response.status}），已停止读取`, 502)
       }
       const mime = (response.headers.get('content-type') || '').split(';')[0].toLowerCase()
-      if (!image && !['text/html', 'application/xhtml+xml'].includes(mime)) {
+      if (!image && !(json ? ['application/json'] : ['text/html', 'application/xhtml+xml']).includes(mime)) {
         await response.body?.cancel()
-        throw new RemoteError('豆瓣未返回有效列表网页', 502)
+        throw new RemoteError(json ? '豆瓣未返回有效海报查询结果，已停止' : '豆瓣未返回有效列表网页', 502)
       }
       const chunks = []
       let size = 0
@@ -179,15 +188,24 @@ export class DoubanService {
     const cached = this.store.db.prepare('SELECT mime,data AS buffer FROM douban_images WHERE id=?').get(id)
     if (cached) return cached
     if (this.offline() || this.stopping) throw new RemoteError('没有本地海报', 404)
+    const mirror = this.store.db.prepare('SELECT objectKey FROM douban_poster_mirrors WHERE id=?').get(id)
     const row = this.store.db.prepare('SELECT data FROM douban_items WHERE id=?').get(id)
     const url = row && JSON.parse(row.data).posterUrl
-    if (!allowedPoster(url)) throw new RemoteError('暂无可用海报', 404)
+    if (!mirror && !allowedPoster(url)) throw new RemoteError('尚无海报地址，请在同步设置中补全海报', 404)
     if (this.posterJobs.has(id)) return this.posterJobs.get(id)
     const job = (async () => {
-      const buffer = await this.read(url, this.posterController.signal, { image: true })
+      const buffer = mirror && this.s3.config ? await this.s3.request('GET', mirror.objectKey, this.posterController.signal) : await this.read(url, this.posterController.signal, { image: true })
       const mime = imageMime(buffer)
       if (!mime) throw new RemoteError('海报格式不受支持', 502)
-      this.store.db.prepare('INSERT OR REPLACE INTO douban_images VALUES(?,?,?,?)').run(id, url, mime, buffer)
+      this.store.db.prepare('INSERT OR REPLACE INTO douban_images VALUES(?,?,?,?)').run(id, url || 's3:' + mirror.objectKey, mime, buffer)
+      if (!mirror && this.s3.config) {
+        try {
+          const key = await this.s3.mirror(id, buffer, mime, this.posterController.signal)
+          this.store.db.prepare('INSERT OR REPLACE INTO douban_poster_mirrors VALUES(?,?)').run(id, key)
+        } catch {
+          // 图片已落本地，桶暂不可用不阻止展示，待上传数量由设置页提供重试入口。
+        }
+      }
       return { mime, buffer }
     })().finally(() => this.posterJobs.delete(id))
     this.posterJobs.set(id, job)
@@ -197,6 +215,6 @@ export class DoubanService {
     this.stopping = true
     this.controller?.abort()
     this.posterController.abort()
-    await Promise.allSettled([this.job, ...this.posterJobs.values()])
+    await Promise.allSettled([this.job, this.posters.close(), ...this.posterJobs.values()])
   }
 }

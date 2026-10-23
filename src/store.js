@@ -47,6 +47,12 @@ export class Store {
         id TEXT PRIMARY KEY REFERENCES douban_items(id), url TEXT NOT NULL,
         mime TEXT NOT NULL, data BLOB NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS douban_poster_attempts (
+        id TEXT PRIMARY KEY REFERENCES douban_items(id), attemptedAt TEXT NOT NULL, state TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS douban_poster_mirrors (
+        id TEXT PRIMARY KEY REFERENCES douban_items(id), objectKey TEXT NOT NULL
+      );
     `)
     for (const [name, value] of [['lightMinutes', 60], ['fullHours', 24]]) {
       if (!this.db.prepare('PRAGMA table_info(servers)').all().some(column => column.name === name)) {

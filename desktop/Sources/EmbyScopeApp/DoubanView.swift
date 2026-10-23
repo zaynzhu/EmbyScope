@@ -67,22 +67,39 @@ private struct DoubanPoster: View {
   @Environment(AppModel.self) private var app
   let item: DoubanItem
   @State private var image: NSImage?
+  @State private var loading = true
+  @State private var error: String?
+  @State private var retry = 0
   var body: some View {
     GeometryReader { size in
       ZStack {
         Theme.line
         if let image { Image(nsImage: image).resizable().scaledToFill().frame(width: size.size.width, height: size.size.height).clipped() }
-        else { Image(systemName: "film").font(.title2).foregroundStyle(Theme.secondary) }
+        else if loading { ProgressView().controlSize(.small) }
+        else { VStack(spacing: 6) {
+          Image(systemName: "film").font(.title2).foregroundStyle(Theme.secondary)
+          Text(error == nil ? "暂无海报" : "加载失败").font(.system(size: 10)).foregroundStyle(Theme.secondary)
+          if error != nil { Button("重试") { retry += 1 }.font(.system(size: 10)).buttonStyle(.borderless) }
+        }.help(error ?? "在同步设置中补全海报") }
       }
     }.accessibilityLabel("\(item.title)海报")
-      .task(id: item.id) {
-        guard let client = app.client, item.posterUrl != nil,
-          let data = try? await client.data("api/douban/items/\(item.id)/poster"), !Task.isCancelled else { return }
-        let thumbnail = await Task.detached(priority: .utility) { () -> CGImage? in
-          guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-          return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 400, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
-        }.value
-        if let thumbnail, !Task.isCancelled { image = NSImage(cgImage: thumbnail, size: .zero) }
+      .task(id: "\(item.id)-\(retry)") {
+        loading = true
+        error = nil
+        defer { loading = false }
+        guard let client = app.client else { return }
+        do {
+          let data = try await client.data("api/douban/items/\(item.id)/poster")
+          guard !Task.isCancelled else { return }
+          let thumbnail = await Task.detached(priority: .utility) { () -> CGImage? in
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 400, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
+          }.value
+          if let thumbnail, !Task.isCancelled { image = NSImage(cgImage: thumbnail, size: .zero) }
+          else if !Task.isCancelled { error = "图片内容无法解码" }
+        } catch let failure as APIError {
+          if !Task.isCancelled && failure.status != 404 { error = failure.localizedDescription }
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
       }
   }
 }

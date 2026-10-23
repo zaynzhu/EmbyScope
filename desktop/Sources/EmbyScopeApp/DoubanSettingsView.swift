@@ -5,7 +5,7 @@ struct DoubanSettingsView: View {
   @Environment(AppModel.self) private var app
   @State private var account = ""
   @State private var confirmFull = false
-  private var disabled: Bool { app.offline || app.demo || app.douban.saving || app.douban.status?.syncing == true || app.douban.status == nil }
+  private var disabled: Bool { app.offline || app.demo || app.douban.saving || app.douban.status?.syncing == true || app.douban.status?.posters?.running == true || app.douban.status == nil }
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       HStack {
@@ -47,6 +47,27 @@ struct DoubanSettingsView: View {
             if let error = run.error { Text(error).font(.caption).foregroundStyle(Theme.accent).textSelection(.enabled) }
           }
         }
+        if let posters = status.posters {
+          Divider()
+          Text("海报补全与存储").font(.headline)
+          Text("待补图 \(posters.missing) · 本地已存 \(posters.cached) · S3 已存 \(posters.mirrored)").font(.caption).monospacedDigit()
+          if posters.pendingMirror > 0 { Text("本地另有 \(posters.pendingMirror) 张尚未上传 S3，点击补全可重试上传。").font(.caption).foregroundStyle(Theme.accent) }
+          Text(posters.s3Configured ? "S3 已配置 · 新图片下载后上传至映览独立目录，本机保留缓存。" : "图片下载后保存在映览本机数据库，尚未配置 S3。")
+            .font(.caption).foregroundStyle(Theme.secondary)
+          HStack {
+            Button("补全缺失海报") { posterAction("fill") }.disabled(disabled || (posters.missing == 0 && posters.pendingMirror == 0))
+            if posters.running {
+              ProgressView().controlSize(.small)
+              Button("停止补图") { posterAction("cancel") }.disabled(app.douban.saving)
+            }
+          }
+          if let run = posters.lastRun {
+            Text("\(run.stateLabel) · 已处理 \(run.processed)/\(run.total) · 已保存 \(run.saved) · 未匹配 \(run.unmatched)").font(.caption).monospacedDigit()
+            if let error = run.error { Text(error).font(.caption).foregroundStyle(Theme.accent).textSelection(.enabled) }
+          }
+          Text("只按豆瓣 ID 精确补图，不修改评分、短评或同步日期。停止后已保存的图片保留，再次补图优先处理未尝试条目；未匹配不代表作品没有海报。")
+            .font(.caption).foregroundStyle(Theme.secondary)
+        }
       } else { Text("正在读取豆瓣同步设置…").font(.callout) }
       if let error = app.douban.statusError {
         HStack { Text(error).font(.caption); Button("重试") { Task { if let client = app.client { await app.douban.loadStatus(client) } } } }.foregroundStyle(Theme.accent)
@@ -62,5 +83,8 @@ struct DoubanSettingsView: View {
   }
   private func start(_ mode: String) {
     Task { if let client = app.client { await app.douban.action(client, path: "api/douban/sync", fields: ["mode": mode]) } }
+  }
+  private func posterAction(_ action: String) {
+    Task { if let client = app.client { await app.douban.action(client, path: "api/douban/posters/\(action)") } }
   }
 }

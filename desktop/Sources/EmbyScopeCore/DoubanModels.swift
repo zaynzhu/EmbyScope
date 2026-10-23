@@ -31,6 +31,25 @@ public struct DoubanList: Decodable {
   public let pages: Int
 }
 public struct DoubanStatus: Decodable {
+  public struct Posters: Decodable {
+    public struct Run: Decodable {
+      public let state: String
+      public let total: Int
+      public let processed: Int
+      public let saved: Int
+      public let unmatched: Int
+      public let error: String?
+      public var stateLabel: String { ["running": "正在补图", "completed": "本轮完成", "failed": "失败", "cancelled": "已停止", "interrupted": "已中断"][state] ?? "未知" }
+    }
+    public let missing: Int
+    public let cached: Int
+    public let mirrored: Int
+    public let pendingMirror: Int
+    public let s3Configured: Bool
+    public let running: Bool
+    public let lastRun: Run?
+  }
+  public let posters: Posters?
   public struct Run: Decodable {
     public let mode: String
     public let state: String
