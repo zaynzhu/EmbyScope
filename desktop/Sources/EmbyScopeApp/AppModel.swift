@@ -12,6 +12,7 @@ enum Page: String, CaseIterable {
 @MainActor @Observable
 final class AppModel {
   let douban = DoubanModel()
+  let inventory = InventoryModel()
   let backend = BackendProcess()
   let demo = CommandLine.arguments.contains("--demo")
   var client: APIClient?
@@ -22,7 +23,9 @@ final class AppModel {
   var loading = false
   var error: String?
   var page: Page = .home
-  var server = "all"
+  var server = "all" {
+    didSet { if oldValue != server { inventory.clear() } }
+  }
   var servers: [Server] = []
   var serverStatusError: String?
   private var serverStatusGeneration = 0
@@ -100,6 +103,7 @@ final class AppModel {
   }
   private func clearSession() {
     douban.clear()
+    inventory.clear()
     generation += 1
     serverStatusError = nil
     detailGeneration += 1
@@ -191,6 +195,11 @@ final class AppModel {
     libraryGeneration += 1
     closeDetail()
     page = destination
+  }
+  func openReview(_ filter: String) {
+    query = ""; mediaType = ""; reviewFilter = filter
+    navigate(to: .duplicates)
+    Task { await loadLibrary() }
   }
   func closeDetail() {
     detailGeneration += 1

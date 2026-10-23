@@ -187,6 +187,8 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return response.end(image.buffer)
       }
       if (path === '/api/servers' && method === 'GET') return send(response, 200, service.listServers())
+      if (path === '/api/inventory' && method === 'GET') return send(response, 200, service.inventory(url.searchParams.get('server')))
+      if (path === '/api/sync-history' && method === 'GET') return send(response, 200, service.history.list(service.selected(url.searchParams.get('server'))))
       if (path === '/api/settings' && method === 'GET') return send(response, 200, appSettings())
       if (path === '/api/settings' && method === 'PUT') { service.updateSettings(await readBody(request)); return send(response, 200, appSettings()) }
       if (path === '/api/servers' && method === 'POST') return send(response, 201, service.saveServer(await readBody(request)))

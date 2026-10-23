@@ -11,6 +11,7 @@ struct LibraryView: View {
         Spacer()
         if let total = app.library?.total { Text("\(total) 个\(app.page == .duplicates ? "关联组" : "作品分组")").font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary) }
       }
+      InventoryPanel()
       if app.page == .duplicates {
         Picker("排查范围", selection: $app.reviewFilter) {
           Text("需核对").tag("issues")

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { normalizeItem, groupWorks } from './identity.js'
 import { normalizeUrl, RemoteError } from './emby.js'
 import { comparisonGroups, matchesReview } from './comparison.js'
+import { SyncHistory } from './sync-history.js'
 
 export class Service {
   constructor(store, client, { cacheMinutes = 60, offline = false } = {}) {
@@ -19,6 +20,7 @@ export class Service {
     this.playbackJobs = new Map()
     this.playbackObservers = new Map()
     this.stopping = false
+    this.history = new SyncHistory(store)
   }
   updateSettings(body) {
     if (typeof body.automaticUpdates !== 'boolean') throw new RemoteError('自动更新开关必须为布尔值', 400)
@@ -94,8 +96,8 @@ export class Service {
     }
     // 旧任务只能读取旧版本，不允许把旧账号的数据写回新连接。
     const running = this.jobs.get(id)
-    if (changed && running) running.finally(() => this.refresh(id)).catch(() => {})
-    else if (changed) this.refresh(id)
+    if (changed && running) running.finally(() => this.refresh(id, { trigger: 'connection' })).catch(() => {})
+    else if (changed) this.refresh(id, { trigger: 'connection' })
     return this.publicServer(this.store.server(id))
   }
   deleteServer(id) {
@@ -103,12 +105,12 @@ export class Service {
     this.store.db.prepare('DELETE FROM servers WHERE id=?').run(id)
     this.playbackObservers.delete(id)
   }
-  refresh(id, { full = true, automatic = false } = {}) {
+  refresh(id, { full = true, automatic = false, trigger } = {}) {
     if (this.stopping || this.offline) return Promise.resolve()
     if (this.jobs.has(id)) return this.jobs.get(id)
     const row = this.store.server(id)
     if (!row) return Promise.resolve()
-    const job = this.sync(row, { full, automatic }).catch(() => {
+    const job = this.sync(row, { full, automatic, trigger }).catch(() => {
       if (this.current(row)) this.store.db.prepare("UPDATE servers SET status='error',error='同步失败，未完整更新' WHERE id=?").run(id)
     }).finally(() => {
       this.jobs.delete(id)
@@ -144,8 +146,12 @@ export class Service {
       throw error
     }
   }
-  async sync(row, { full = true, automatic = false } = {}) {
+  async sync(row, { full = true, automatic = false, trigger } = {}) {
     if (automatic && !this.settings().automaticUpdates) return
+    return this.history.track(this, row, full ? 'full' : 'light', automatic ? 'automatic' : trigger === 'connection' ? 'connection' : 'manual',
+      run => this.syncData(row, { full, automatic }, run))
+  }
+  async syncData(row, { full, automatic }, run) {
     if (automatic) row = { ...row, canRequest: () => !this.stopping && this.settings().automaticUpdates && this.current(row) }
     let secret = this.store.decrypt(row.secret)
     this.store.db.prepare('UPDATE servers SET attemptedAt=? WHERE id=?').run(new Date().toISOString(), row.id)
@@ -191,12 +197,17 @@ export class Service {
         if (automatic && !this.settings().automaticUpdates) return
         try {
           const data = await task()
-          if (this.current(row)) this.store.saveCache(row.id, kind, data)
+          if (this.current(row)) {
+            this.store.saveCache(row.id, kind, data)
+            this.history.step(run, kind, data.length)
+          }
         } catch (error) {
           const safe = error instanceof RemoteError ? error : new RemoteError('接口数据格式不完整')
           if (automatic && safe.status === 409 && !this.settings().automaticUpdates) return
+          if (this.current(row) && !this.stopping) this.history.step(run, kind, null, safe)
           this.failCache(row, kind, safe)
           if (kind === 'catalog' && safe.status === 403) {
+            run.state = 'failed'; run.message = '片库读取无权限，需检查连接'
             this.invalidateAuth(row, safe)
             return
           }
@@ -205,12 +216,16 @@ export class Service {
         }
       }
       if (this.current(row)) {
+        run.state = partial || full && this.catalogWarning(this.store.cache(row.id, 'catalog')) ? 'partial' : 'completed'
+        run.message = run.state === 'partial' ? '部分数据无权限、不可用或范围不完整' : null
         this.store.db.prepare('UPDATE servers SET status=?,error=? WHERE id=?').run(partial ? 'partial' : 'online', partial ? '部分接口无权限或不可用' : null, row.id)
         this.startSeasonSync(row)
       }
     } catch (error) {
       if (this.stopping || !this.current(row)) return
       const safe = error instanceof RemoteError ? error : new RemoteError('接口数据格式不完整')
+      run.state = 'failed'
+      run.message = [401, 403].includes(safe.status) ? '账号或权限校验失败' : '连接或数据读取失败，未完整更新'
       for (const kind of (full ? ['catalog', 'views', 'latest', 'resume'] : ['views', 'latest', 'resume'])) this.failCache(row, kind, safe)
       if (safe.status === 401) {
         this.invalidateAuth(row, safe)
@@ -261,7 +276,7 @@ export class Service {
       return !cache?.data || cache.error || Date.now() - Date.parse(cache.updatedAt) >= ttl
     })
     if (!pending.length) return
-    const job = (async () => {
+    const job = this.history.track(this, row, 'seasons', 'automatic', async run => {
       this.store.saveCache(row.id, 'seasonBatch', { at: Date.now() })
       for (const item of pending.slice(0, 20)) {
         if (this.stopping || !this.current(row) || !this.settings().automaticUpdates) return
@@ -270,24 +285,30 @@ export class Service {
           const seasons = await this.client.seasons(row, secret, item.id)
           if (!this.current(row)) return
           this.store.saveCache(row.id, kind, seasons.map(season => ({ ...normalizeItem(season, row.id), episodeCount: season.ChildCount })))
+          this.history.step(run, 'seasons', seasons.length)
         } catch (error) {
           if (!this.current(row)) return
           const safe = error instanceof RemoteError ? error : new RemoteError('季接口数据格式不完整')
           if (safe.status === 409 && !this.settings().automaticUpdates) return
+          if (!this.stopping) this.history.step(run, 'seasons', null, safe)
           this.failCache(row, kind, safe)
           // 失败检查时间独立保存，不把旧数据标为刚刚更新。
           this.store.saveCache(row.id, `seasonAttempt:${item.id}`, { at: Date.now() })
           if (safe.status === 401) {
+            run.state = 'failed'; run.message = '账号校验失败'
             this.invalidateAuth(row, safe)
             return
           }
           if (safe.status >= 500 || safe.status === 429 || safe.message === '连接失败或请求超时') {
+            run.state = run.steps.some(step => step.state === 'completed') ? 'partial' : 'failed'
+            run.message = '季集读取异常，已进入原有冷却等待'
             this.store.saveCache(row.id, 'seasonRetry', { at: Date.now() })
             return
           }
         }
       }
-    })().catch(() => {}).finally(() => this.seasonJobs.delete(row.id))
+      run.state = run.steps.some(step => step.state === 'failed') ? 'partial' : 'completed'
+    }).catch(() => {}).finally(() => this.seasonJobs.delete(row.id))
     this.seasonJobs.set(row.id, job)
   }
   async readDetail(serverId, itemId, params) {
@@ -432,6 +453,16 @@ export class Service {
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page')) || 1))
     return { items: items.slice((page - 1) * pageSize, page * pageSize), total, page, pages, pageSize, knownServers,
       servers: rows.map(row => this.publicServer(row, catalogs.get(row.id))) }
+  }
+  inventory(serverId) {
+    const rows = this.selected(serverId)
+    const catalogs = new Map(rows.map(row => [row.id, this.store.cache(row.id, 'catalog')]))
+    const known = rows.filter(row => catalogs.get(row.id)?.data != null).length
+    const groups = known ? this.comparisons(rows, catalogs) : []
+    const servers = rows.map(row => this.publicServer(row, catalogs.get(row.id)))
+    return { ...this.settings(), servers, knownServers: known, totalServers: rows.length,
+      complete: rows.length > 0 && known === rows.length && servers.every(row => !row.datasets.catalog.error && !row.datasets.catalog.warning),
+      counts: Object.fromEntries(['resources', 'metadata', 'unknown'].map(filter => [filter, known ? groups.filter(group => matchesReview(group, filter)).length : null])) }
   }
   findItem(serverId, itemId) {
     if (!this.store.server(serverId)) throw new RemoteError('连接不存在', 404)

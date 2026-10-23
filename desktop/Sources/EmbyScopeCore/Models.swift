@@ -112,6 +112,7 @@ public struct Server: Codable, Identifiable, Hashable {
     public let items: Int
   }
   public struct EpisodeSync: Codable, Hashable {
+    public let updatedAt: String?
     public let completed: Int
     public let series: Int
     public let failed: Int

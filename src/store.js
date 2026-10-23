@@ -34,6 +34,12 @@ export class Store {
         kind TEXT NOT NULL, data TEXT NOT NULL, updatedAt TEXT NOT NULL,
         error TEXT, PRIMARY KEY(serverId, kind)
       );
+      CREATE TABLE IF NOT EXISTS sync_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        serverId TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        mode TEXT NOT NULL, trigger TEXT NOT NULL, startedAt TEXT NOT NULL,
+        finishedAt TEXT, state TEXT NOT NULL, steps TEXT NOT NULL, message TEXT
+      );
       CREATE TABLE IF NOT EXISTS images (
         serverId TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
         itemId TEXT NOT NULL, tag TEXT NOT NULL, mime TEXT NOT NULL,

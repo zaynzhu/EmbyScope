@@ -7,6 +7,7 @@ struct SettingsView: View {
   @State private var editing: ServerEditorTarget?
   @State private var deleting: Server?
   @State private var confirmFull = false
+  @State private var showHistory = false
   @State private var confirmOnline = false
   @State private var proxyTarget: Server?
   @State private var showPasswordSetup = false
@@ -37,6 +38,7 @@ struct SettingsView: View {
             Button("轻量更新当前范围") { Task { await app.refresh(full: false) } }.disabled(app.demo || app.offline)
             Button("完整校准当前范围…") { confirmFull = true }.disabled(app.demo || app.offline)
             Button("重新读取本地状态") { Task { await app.loadScope() } }
+            Button("同步记录") { showHistory = true }
           }
           Text("轻量更新读取媒体库、最近入库和继续观看；完整校准会分页读取片库。所有远端请求限速，同服务间隔至少两秒。").font(.caption).foregroundStyle(Theme.secondary)
         }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
@@ -91,6 +93,7 @@ struct SettingsView: View {
       }
     }
     .sheet(isPresented: $showPasswordSetup) { PasswordLockEditor() }
+    .sheet(isPresented: $showHistory) { SyncHistoryView() }
     .sheet(item: $proxyTarget) { ProxyEditor(server: $0) }
     .alert("退出离线预览？", isPresented: $confirmOnline) {
       Button("取消", role: .cancel) {}
@@ -155,7 +158,7 @@ private struct ServerUpdateDetails: View {
         Text("季集信息\(episodes.syncing ? "补齐中" : "") · 已缓存 \(episodes.completed) / \(episodes.series) 部剧 · 已知 \(episodes.knownEpisodes) 集\(episodes.failed > 0 ? " · \(episodes.failed) 部读取失败" : "")\(episodes.stale ? " · 待更新" : "")")
           .font(.caption).foregroundStyle(Theme.secondary)
       }
-      Text("尝试时间不代表成功；轻量更新不重读完整片库。以上为最新状态，不保留历次执行记录。")
+      Text("尝试时间不代表成功；轻量更新不重读完整片库。历次服务器更新可在“同步记录”中查看。")
         .font(.caption).foregroundStyle(Theme.secondary)
     }
   }

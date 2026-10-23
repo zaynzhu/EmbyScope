@@ -63,6 +63,62 @@ struct AppModelTests {
       "recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "保留首页内容"
     ]))
   }
+  @Test func inventoryScopeChangeRejectsOldResponsesAndClearsOnSessionEnd() async {
+    let (model, requests) = fixture()
+    let first = Task { await model.inventory.load(model.client!, server: "a") }
+    let oldRequest = await requests.next()
+    #expect(oldRequest.request.url?.path == "/api/inventory")
+    let second = Task { await model.inventory.load(model.client!, server: "b") }
+    let newRequest = await requests.next()
+    newRequest.respond(["servers": [], "automaticUpdates": false, "offline": true, "knownServers": 1, "totalServers": 1, "complete": true, "counts": ["resources": 7, "metadata": 0, "unknown": 0]])
+    await second.value
+    oldRequest.respond(["error": "旧范围失败"], status: 500)
+    await first.value
+    #expect(model.inventory.snapshot?.counts.resources == 7)
+    #expect(model.inventory.error == nil)
+    let history = Task { await model.inventory.loadHistory(model.client!, server: "b") }
+    let historyRequest = await requests.next()
+    #expect(historyRequest.request.url?.path == "/api/sync-history")
+    #expect(historyRequest.request.httpMethod == "GET")
+    model.inventory.clear()
+    historyRequest.respond(["available": true, "limit": 100, "retained": 2000, "items": []])
+    await history.value
+    #expect(model.inventory.history == nil)
+    #expect(model.inventory.snapshot == nil)
+  }
+  @Test func serverSwitchDoesNotDiscardAlreadyStartedInventoryRequest() async {
+    let (model, requests) = fixture()
+    let client = model.client!
+    model.server = "b"
+    let pending = Task { await model.inventory.load(client, server: model.server) }
+    let request = await requests.next()
+    // 模拟视图先启动新范围请求，随后异步执行切服清理。
+    model.client = nil
+    await model.switchServer()
+    request.respond(["servers": [], "automaticUpdates": false, "offline": true, "knownServers": 1, "totalServers": 1, "complete": true, "counts": ["resources": 7, "metadata": 0, "unknown": 0]])
+    await pending.value
+    #expect(model.inventory.snapshot?.counts.resources == 7)
+    model.server = "c"
+    #expect(model.inventory.snapshot == nil)
+  }
+  @Test func issueShortcutUsesExistingReviewAndKeepsServerAndDoubanState() async {
+    let (model, requests) = fixture()
+    model.server = "selected-server"
+    model.query = "原搜索"
+    model.mediaType = "Series"
+    model.libraryPage = 4
+    model.douban.query = "独立豆瓣搜索"
+    model.openReview("metadata")
+    let request = await requests.next()
+    let params = URLComponents(url: request.request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    #expect(params.contains(URLQueryItem(name: "review", value: "metadata")))
+    #expect(params.contains(URLQueryItem(name: "server", value: "selected-server")))
+    #expect(params.contains(URLQueryItem(name: "page", value: "1")))
+    request.respond(library("待核对"))
+    #expect(model.page == .duplicates)
+    #expect(model.query.isEmpty && model.mediaType.isEmpty)
+    #expect(model.douban.query == "独立豆瓣搜索")
+  }
   @Test func doubanPaginationFailureKeepsOriginalPageAndRetryPosition() async {
     let (model, requests) = fixture()
     let first = Task { await model.douban.load(model.client!) }
