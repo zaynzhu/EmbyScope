@@ -13,7 +13,7 @@
 | [refresh-scheduling.md](refresh-scheduling.md) | 自动更新包含轻量、全库和季集任务，暂停必须覆盖所有入口 | 🔶部分可用 | 2026-10-23 |
 | [macos-delivery.md](macos-delivery.md) | App、安装位置、DMG 与离线预览是不同交付物 | 🔶部分可用 | 2026-10-23 |
 | [desktop-password-lock.md](desktop-password-lock.md) | 桌面免启动密码不能绕过本机进程认证或开放网页版 | ✅有现成方案 | 2026-10-23 |
-| [douban-sync-posters.md](douban-sync-posters.md) | 已看提交后限定范围补图；0.1.17 已验证列表与占位动态刷新 | ✅有现成方案 | 2026-10-24 |
+| [douban-sync-posters.md](douban-sync-posters.md) | 提交后限定范围补图，列表与缺图独立刷新；附停止读取证据及模拟超时避坑 | ✅有现成方案 | 2026-10-24 |
 
 ## 证据读取约定
 
