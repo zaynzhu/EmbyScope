@@ -6,6 +6,9 @@ struct DoubanView: View {
   @Environment(AppModel.self) private var app
   @Environment(\.scenePhase) private var scenePhase
   @State private var selected: DoubanItem?
+  @State private var statusRetry = 0
+  @State private var applicationActive = NSApplication.shared.isActive
+  private var shouldReadStatus: Bool { applicationActive && scenePhase == .active && app.page == .douban && app.authenticated }
   var body: some View {
     @Bindable var model = app.douban
     VStack(alignment: .leading, spacing: 20) {
@@ -25,6 +28,9 @@ struct DoubanView: View {
       }
       if let error = model.error {
         HStack { Text(error).font(.callout); Button("重试") { Task { if let client = app.client { await model.load(client, page: model.retryPage) } } } }.foregroundStyle(Theme.accent)
+      }
+      if let error = model.statusError {
+        HStack { Text("同步状态读取失败：\(error)").font(.callout); Button("重试状态") { statusRetry += 1 } }.foregroundStyle(Theme.accent)
       }
       ScrollView {
         if let result = model.result {
@@ -55,17 +61,21 @@ struct DoubanView: View {
         Button("下一页") { Task { if let client = app.client { await model.load(client, page: (model.result?.page ?? 1) + 1) } } }.disabled(model.loading || model.result == nil || (model.result?.page ?? 1) >= (model.result?.pages ?? 1))
       }
     }.padding(28)
-      .task(id: scenePhase == .active) {
-        guard scenePhase == .active, let client = app.client else { return }
+      .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in applicationActive = true }
+      .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in applicationActive = false }
+      .task(id: "\(shouldReadStatus)-\(statusRetry)") {
+        guard shouldReadStatus, let client = app.client else { return }
         repeat {
           await model.loadStatus(client)
+          guard model.statusError == nil else { return }
           guard model.status?.syncing == true || model.status?.posters?.running == true else { return }
           do { try await Task.sleep(for: .seconds(5)) } catch { return }
         } while !Task.isCancelled
       }
-      .task(id: "\(model.query)\u{0}\(model.type)") {
+      .task(id: [String(shouldReadStatus), model.query, model.type, String(model.listRevision)]) {
+        guard shouldReadStatus else { return }
         do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-        if let client = app.client { await model.load(client, clearResults: true) }
+        if let client = app.client { await model.refreshList(client) }
       }
       .sheet(item: $selected) { item in DoubanDetail(item: item) }
   }
@@ -92,9 +102,11 @@ private struct DoubanPoster: View {
       }
     }.accessibilityLabel("\(item.title)海报")
       .task(id: "\(item.id)-\(retry)-\(app.douban.status?.posters?.cached ?? 0)") {
+        // 缓存增长只重试缺图，已经显示的海报不重复读取和解码。
+        guard image == nil else { return }
         loading = true
         error = nil
-        defer { loading = false }
+        defer { if !Task.isCancelled { loading = false } }
         guard let client = app.client else { return }
         do {
           let data = try await client.data("api/douban/items/\(item.id)/poster")

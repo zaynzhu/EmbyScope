@@ -155,6 +155,111 @@ struct AppModelTests {
     await pending.value
     #expect(model.douban.result == nil)
   }
+  private func doubanStatus(total: Int = 30, state: String = "running", run: String = "first", cached: Int = 0) -> [String: Any] {
+    ["account": "fixture", "total": total, "movies": total, "series": 0, "unknown": 0,
+      "syncing": state == "running", "offline": false, "canIncremental": true,
+      "lastRun": ["mode": "incremental", "state": state, "scanned": 1, "pages": 1, "imported": 0, "updated": 1, "skipped": 0,
+        "startedAt": run, "finishedAt": state == "running" ? NSNull() : (run + "-end") as Any],
+      "posters": ["missing": total - cached, "cached": cached, "mirrored": 0, "pendingMirror": 0, "s3Configured": false, "running": cached < total]]
+  }
+  @Test func doubanSuccessfulCommitRefreshesEvenWithoutNewItemsButPosterProgressDoesNot() async {
+    let (app, requests) = fixture()
+    let model = app.douban
+    func status(_ value: [String: Any]) async {
+      let task = Task { await model.loadStatus(app.client!) }
+      let request = await requests.next()
+      #expect(request.request.url?.path == "/api/douban/status")
+      request.respond(value)
+      await task.value
+    }
+    await status(doubanStatus())
+    let baseline = model.listRevision
+    await status(doubanStatus(cached: 1))
+    #expect(model.listRevision == baseline)
+    await status(doubanStatus(state: "completed", cached: 1))
+    #expect(model.listRevision == baseline + 1)
+    await status(doubanStatus(state: "completed", cached: 2))
+    #expect(model.listRevision == baseline + 1)
+    await status(doubanStatus(state: "completed", run: "second", cached: 2))
+    #expect(model.listRevision == baseline + 2)
+    await status(doubanStatus(total: 31, state: "completed", run: "third", cached: 2))
+    #expect(model.listRevision == baseline + 3)
+    await status(doubanStatus(total: 31, state: "failed", run: "fourth", cached: 2))
+    #expect(model.listRevision == baseline + 3)
+  }
+  @Test func doubanRefreshKeepsPageAndFiltersAndOnlyNewSearchResetsPage() async {
+    let (app, requests) = fixture()
+    let model = app.douban
+    model.query = "原搜索"; model.type = "Movie"
+    let first = Task { await model.load(app.client!, page: 2) }
+    let firstRequest = await requests.next()
+    firstRequest.respond(["items": [["id": "1", "type": "Movie", "title": "原搜索"]], "total": 30, "page": 2, "pages": 2])
+    await first.value
+    let refresh = Task { await model.refreshList(app.client!) }
+    let refreshRequest = await requests.next()
+    let params = URLComponents(url: refreshRequest.request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    #expect(params.contains(URLQueryItem(name: "page", value: "2")))
+    #expect(params.contains(URLQueryItem(name: "q", value: "原搜索")))
+    #expect(params.contains(URLQueryItem(name: "type", value: "Movie")))
+    refreshRequest.respond(["items": [["id": "1", "type": "Movie", "title": "原搜索", "comment": "补充短评"]], "total": 31, "page": 2, "pages": 2])
+    await refresh.value
+    #expect(model.result?.items.first?.comment == "补充短评")
+    #expect(model.result?.total == 31)
+    model.query = "新搜索"
+    let search = Task { await model.refreshList(app.client!) }
+    let searchRequest = await requests.next()
+    #expect(model.result == nil)
+    #expect(URLComponents(url: searchRequest.request.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(URLQueryItem(name: "page", value: "1")) == true)
+    searchRequest.respond(["items": [], "total": 0, "page": 1, "pages": 1])
+    await search.value
+    #expect(model.query == "新搜索" && model.type == "Movie")
+  }
+  @Test func doubanCommitDuringListReadCannotBeOverwrittenByOlderSnapshot() async {
+    let (app, requests) = fixture()
+    let initial = Task { await app.douban.load(app.client!) }
+    let initialRequest = await requests.next()
+    initialRequest.respond(["items": [], "total": 30, "page": 1, "pages": 2])
+    await initial.value
+    let old = Task { await app.douban.load(app.client!, page: 2) }
+    let oldRequest = await requests.next()
+    let sync = Task { await app.douban.loadStatus(app.client!) }
+    let statusRequest = await requests.next()
+    statusRequest.respond(doubanStatus(state: "completed"))
+    await sync.value
+    let current = Task { await app.douban.refreshList(app.client!) }
+    let newRequest = await requests.next()
+    #expect(URLComponents(url: newRequest.request.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(URLQueryItem(name: "page", value: "2")) == true)
+    newRequest.respond(["items": [["id": "2", "type": "Movie", "title": "同步后的记录"]], "total": 31, "page": 2, "pages": 2])
+    await current.value
+    oldRequest.respond(["items": [], "total": 0, "page": 1, "pages": 1])
+    await old.value
+    #expect(app.douban.result?.items.first?.id == "2")
+    #expect(app.douban.result?.total == 31)
+    #expect(app.douban.result?.page == 2)
+  }
+  @Test func doubanStatusFailureRetainsSnapshotAndLateResponseAfterClearIsIgnored() async {
+    let (app, requests) = fixture()
+    let first = Task { await app.douban.loadStatus(app.client!) }
+    let firstRequest = await requests.next()
+    firstRequest.respond(doubanStatus())
+    await first.value
+    let revision = app.douban.listRevision
+    let failing = Task { await app.douban.loadStatus(app.client!) }
+    let failedRequest = await requests.next()
+    failedRequest.respond(["error": "模拟状态读取失败"], status: 500)
+    await failing.value
+    #expect(app.douban.status?.syncing == true)
+    #expect(app.douban.statusError == "模拟状态读取失败")
+    #expect(app.douban.listRevision == revision)
+    let pending = Task { await app.douban.loadStatus(app.client!) }
+    let lateRequest = await requests.next()
+    app.douban.clear()
+    let clearedRevision = app.douban.listRevision
+    lateRequest.respond(doubanStatus(state: "completed"))
+    await pending.value
+    #expect(app.douban.status == nil && app.douban.statusError == nil)
+    #expect(app.douban.listRevision == clearedRevision)
+  }
   @Test func serverStatusReadsOnlyLocalStateAndPreservesItOnFailure() async throws {
     let (model, requests) = fixture()
     model.automaticUpdates = true
