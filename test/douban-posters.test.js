@@ -14,6 +14,7 @@ import { importWhatShotPosters } from '../scripts/import-whatshot-posters.mjs'
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfXkAAAAASUVORK5CYII=', 'base64')
 const url = 'https://img3.doubanio.com/view/photo/a.jpg'
 const config = { endpoint: 'https://storage.example', bucket: 'posters', accessKey: 'TEST_ACCESS', secretKey: 'TEST_SECRET', region: 'us-east-1' }
+const collected = (id, date) => `<li id="list${id}" class="item"><div class="title"><a href="https://movie.douban.com/subject/${id}/">test${id}</a></div><div class="date">${date}</div><div class="comment">新短评</div></li>`
 function fixture(t, s3 = false) {
   const dir = mkdtempSync(join(tmpdir(), 'poster-test-'))
   const store = new Store(dir)
@@ -36,6 +37,67 @@ test('海报只接受精确ID唯一安全地址，标题同名与冲突不猜选
   assert.equal(exactPoster([{ id: '1', img: url }, { id: '1', img: url + 'x' }], '1', allowedPoster), null)
   assert.equal(exactPoster([{ id: '1', img: 'http://127.0.0.1/a' }], '1', allowedPoster), null)
   assert.throws(() => exactPoster({}, '1', allowedPoster))
+})
+
+test('增量成功后自动下载本次缺图并镜像S3，不扫描截止日期前的旧库', async t => {
+  const f = fixture(t, true)
+  const queries = []
+  f.service.fetchImpl = async input => {
+    const target = new URL(input)
+    if (target.pathname.endsWith('/collect')) return new Response(`<ul class="list-view">${collected('3', '2026-10-12')}${collected('9', '2026-10-10')}</ul>`, { headers: { 'Content-Type': 'text/html' } })
+    if (target.pathname === '/j/subject_suggest') {
+      queries.push(target.searchParams.get('q'))
+      return Response.json([{ id: '3', img: url }])
+    }
+    if (target.hostname === 'storage.example') return new Response('')
+    return new Response(png)
+  }
+  f.service.start('incremental')
+  await f.service.job
+  await f.service.posters.job
+  assert.deepEqual(queries, ['test3'])
+  assert.equal(f.service.status().lastRun.state, 'completed')
+  assert.equal(f.service.status().checkpoint, '2026-10-12')
+  assert.equal(f.service.status().posters.lastRun.total, 1)
+  assert.equal(f.service.status().posters.lastRun.state, 'completed')
+  assert.equal(f.service.status().posters.cached, 1)
+  assert.equal(f.service.status().posters.mirrored, 1)
+  assert.equal(JSON.parse(f.store.db.prepare("SELECT data FROM douban_items WHERE id='3'").get().data).comment, '新短评')
+  for (const old of f.originals) assert.deepEqual(JSON.parse(f.store.db.prepare('SELECT data FROM douban_items WHERE id=?').get(old.id).data), old)
+})
+
+test('自动补图失败不回滚已提交的增量，重试增量可修复同日已有缺图', async t => {
+  const f = fixture(t)
+  let blocked = true
+  let queries = 0
+  f.service.fetchImpl = async input => {
+    const target = new URL(input)
+    if (target.pathname.endsWith('/collect')) return new Response(`<ul class="list-view">${collected('3', '2026-10-12')}${collected('9', '2026-10-10')}</ul>`, { headers: { 'Content-Type': 'text/html' } })
+    if (target.pathname === '/j/subject_suggest') {
+      queries++
+      return blocked ? new Response('', { status: 403 }) : Response.json([{ id: '3', img: url }])
+    }
+    return new Response(png)
+  }
+  f.service.start('incremental')
+  await f.service.job
+  await f.service.posters.job
+  assert.equal(queries, 1)
+  assert.equal(f.service.status().lastRun.state, 'completed')
+  assert.equal(f.service.status().checkpoint, '2026-10-12')
+  assert.equal(f.service.status().total, 3)
+  assert.equal(f.service.status().posters.lastRun.state, 'failed')
+  blocked = false
+  f.service.start('incremental')
+  await f.service.job
+  await f.service.posters.job
+  assert.equal(f.service.status().lastRun.imported, 0)
+  assert.equal(f.service.status().posters.cached, 1)
+  assert.equal(queries, 2)
+  f.service.start('incremental')
+  await f.service.job
+  assert.equal(f.service.posters.job, null)
+  assert.equal(queries, 2)
 })
 
 test('补图下载后保存本地并上传S3，其他个人字段和检查点不变，可离线读取', async t => {

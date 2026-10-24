@@ -4,6 +4,7 @@ import EmbyScopeCore
 
 struct DoubanView: View {
   @Environment(AppModel.self) private var app
+  @Environment(\.scenePhase) private var scenePhase
   @State private var selected: DoubanItem?
   var body: some View {
     @Bindable var model = app.douban
@@ -54,7 +55,14 @@ struct DoubanView: View {
         Button("下一页") { Task { if let client = app.client { await model.load(client, page: (model.result?.page ?? 1) + 1) } } }.disabled(model.loading || model.result == nil || (model.result?.page ?? 1) >= (model.result?.pages ?? 1))
       }
     }.padding(28)
-      .task { if let client = app.client { await model.loadStatus(client) } }
+      .task(id: scenePhase == .active) {
+        guard scenePhase == .active, let client = app.client else { return }
+        repeat {
+          await model.loadStatus(client)
+          guard model.status?.syncing == true || model.status?.posters?.running == true else { return }
+          do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        } while !Task.isCancelled
+      }
       .task(id: "\(model.query)\u{0}\(model.type)") {
         do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
         if let client = app.client { await model.load(client, clearResults: true) }
@@ -83,7 +91,7 @@ private struct DoubanPoster: View {
         }.help(error ?? "在同步设置中补全海报") }
       }
     }.accessibilityLabel("\(item.title)海报")
-      .task(id: "\(item.id)-\(retry)") {
+      .task(id: "\(item.id)-\(retry)-\(app.douban.status?.posters?.cached ?? 0)") {
         loading = true
         error = nil
         defer { loading = false }

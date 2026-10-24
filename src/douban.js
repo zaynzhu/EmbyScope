@@ -82,12 +82,21 @@ export class DoubanService {
     const run = { mode, state: 'running', scanned: 0, pages: 0, imported: 0, updated: 0, skipped: 0,
       startedAt: new Date().toISOString(), finishedAt: null, error: null }
     saveDoubanState(this.store, { ...state, lastRun: run })
-    this.job = this.sync(state, run, this.controller.signal).catch(error => {
+    let posterIds
+    this.job = this.sync(state, run, this.controller.signal).then(ids => { posterIds = ids }).catch(error => {
       run.state = this.stopping ? 'interrupted' : this.controller.signal.aborted ? 'cancelled' : 'failed'
       run.error = this.controller.signal.aborted ? '同步已停止，原数据和同步日期已保留' : error instanceof RemoteError ? error.message : '豆瓣连接失败或请求超时，原进度已保留'
       run.finishedAt = new Date().toISOString()
       saveDoubanState(this.store, { ...state, lastRun: run })
-    }).finally(() => { this.job = null; this.controller = null })
+    }).finally(() => {
+      this.job = null
+      this.controller = null
+      // 已看记录先提交；补图使用独立任务和失败状态，不回滚同步进度。
+      if (posterIds?.size && !this.stopping && !this.offline()) {
+        try { this.posters.start({ ids: posterIds }) }
+        catch { console.error('本次豆瓣同步已保存，海报任务启动失败，可在设置中重试补图') }
+      }
+    })
     return this.status()
   }
   cancel() { this.controller?.abort(); return this.status() }
@@ -183,6 +192,7 @@ export class DoubanService {
       run.imported = 0; run.updated = 0; run.skipped = 0
       throw error
     }
+    return new Set(seen.keys())
   }
   async poster(id) {
     const cached = this.store.db.prepare('SELECT mime,data AS buffer FROM douban_images WHERE id=?').get(id)

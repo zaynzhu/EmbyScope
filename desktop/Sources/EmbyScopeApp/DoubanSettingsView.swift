@@ -77,7 +77,7 @@ struct DoubanSettingsView: View {
       if let error = app.douban.statusError {
         HStack { Text(error).font(.caption); Button("重试") { Task { if let client = app.client { await app.douban.loadStatus(client) } } } }.foregroundStyle(Theme.accent)
       }
-      Text("增量从上次成功进度继续；全量重读已看列表并补充空字段，不删除历史记录或覆盖原评分、短评。来源未明确类型的新条目标为未分类。请求至少间隔两秒，失败或取消保留原进度。")
+      Text("增量从上次成功进度继续；全量重读已看列表并补充空字段，不删除历史记录或覆盖原评分、短评。同步成功后自动补全本次涉及的缺失海报，配置 S3 时同时上传；补图失败保留已看记录和同步进度，可在下方重试。来源未明确类型的新条目标为未分类。请求至少间隔两秒，失败或取消保留原进度。")
         .font(.caption).foregroundStyle(Theme.secondary)
     }.padding(22).background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
       .onChange(of: app.douban.status?.account, initial: true) { _, value in if let value { account = value } }

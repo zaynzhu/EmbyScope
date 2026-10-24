@@ -37,7 +37,7 @@ export class DoubanPosters {
     const pendingMirror = this.service.s3.config ? this.store.db.prepare('SELECT count(*) AS n FROM douban_images c WHERE NOT EXISTS(SELECT 1 FROM douban_poster_mirrors m WHERE m.id=c.id)').get().n : 0
     return { missing, cached, mirrored, pendingMirror, s3Configured: !!this.service.s3.config, s3: this.service.s3.settings(), running: !!this.job, lastRun: this.run }
   }
-  start() {
+  start({ ids } = {}) {
     if (this.service.stopping || this.service.offline()) throw new RemoteError('离线模式不能补全海报', 409)
     if (this.job || this.service.job) throw new RemoteError('请等待当前豆瓣任务结束', 409)
     // 未尝试的优先；中断后不会反复停留在首批无匹配记录。
@@ -46,6 +46,8 @@ export class DoubanPosters {
       WHERE (coalesce(json_extract(i.data,'$.posterUrl'),'')='' AND NOT EXISTS(SELECT 1 FROM douban_images c WHERE c.id=i.id))
         OR (? AND EXISTS(SELECT 1 FROM douban_images c WHERE c.id=i.id) AND NOT EXISTS(SELECT 1 FROM douban_poster_mirrors m WHERE m.id=i.id))
       ORDER BY a.attemptedAt IS NOT NULL, a.attemptedAt, json_extract(i.data,'$.date') DESC, i.id`).all(this.service.s3.config ? 1 : 0).map(row => JSON.parse(row.data))
+      .filter(item => !ids || ids.has(item.id))
+    if (!targets.length) return this.status()
     this.controller = new AbortController()
     this.run = { state: 'running', total: targets.length, processed: 0, saved: 0, unmatched: 0,
       startedAt: new Date().toISOString(), finishedAt: null, error: null }

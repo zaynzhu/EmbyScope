@@ -18,6 +18,8 @@ function fixture(t, pages = []) {
   const store = new Store(directory)
   const calls = []
   const service = new DoubanService(store, { limiter: new RateLimiter(1), fetchImpl: async url => {
+    if (new URL(url).pathname === '/j/subject_suggest') return Response.json([])
+    if (new URL(url).hostname === 'm.douban.com') return new Response('', { status: 404 })
     calls.push(Number(new URL(url).searchParams.get('start')))
     const page = pages[calls.length - 1] ?? html()
     return new Response(page instanceof Error ? '' : page, { status: page instanceof Error ? 403 : 200, headers: { 'Content-Type': 'text/html' } })
