@@ -29,8 +29,8 @@ SwiftUI 原生界面以「此刻」首页展示最近观看、继续观看和独
 - 展示来源、更新时间、同步中 / 在线 / 部分可用 / 离线 / 权限异常状态。
 - Mac 的豆瓣已看独立保存个人评分、短评和同步进度；设置中支持全量／增量同步，成功后自动接续本次范围的缺图补全。海报保存本地，可配置 S3 镜像，无需运行 PixelReel 或 WhatShot。详情见[豆瓣已看说明](docs/macOS安装与备份.md#豆瓣已看)。
 - Mac 首页直接展示 Trakt 最近观看与续播海报，同剧保留最新一集，并可切换服务器记录；「Trakt 观看」用海报网格展示完整记录。海报按作品 ID 从 Trakt／已配置的 TMDB 获取并缓存本机。
-- 「Trakt 观看」使用独立设备码授权，手动同步最近已看、全量已看电影／单集和续播百分比；可读取 Apple TV Infuse 已上传的记录，无需启动 Mac Infuse。与 Emby、豆瓣分别展示，不写回远端。详情见 [Trakt 使用说明](docs/macOS使用说明.md#0118trakt-观看记录)。
-- 播放次数、总观看时长、排行、趋势没有接入可信历史，统一标记不可用。进度只使用账号的 `PlaybackPositionTicks / RunTimeTicks`。
+- 「Trakt 观看」使用独立设备码授权，手动同步最近已看、全量已看电影／单集和续播百分比；可读取 Apple TV Infuse 已上传的记录，无需启动 Mac Infuse。与 Emby、豆瓣分别展示，不写回远端。「账号与配置」集中管理账号授权、应用与海报来源，详情见 [Trakt 使用说明](docs/macOS使用说明.md#0120账号配置与导航)。
+- Emby 播放次数、总观看时长、排行、趋势没有接入可信历史，统一标记不可用；Emby 进度使用账号的 `PlaybackPositionTicks / RunTimeTicks`，Trakt 进度使用其上报的百分比，两者不合并。
 - 不播放、代理或下载视频，不触发远端刮削、不写 NFO，不修改 Emby 媒体或用户数据；Emby 请求限于登录 POST 和只读 GET。豆瓣海报可下载到本机，并在配置 S3 后上传至指定桶。
 
 ## 本地启动
@@ -130,6 +130,8 @@ src/sync-history.js  服务器同步执行记录
 src/douban.js      独立豆瓣已看、同步进度与任务接续
 src/douban-posters.js  豆瓣海报查询、下载与补全
 src/poster-s3.js   可配置的 S3 签名读取与镜像上传
+src/trakt.js       独立 Trakt 授权、观看快照与首页摘要
+src/trakt-posters.js  按作品 ID 获取并缓存 Trakt／TMDB 海报
 src/identity.js    数据白名单和保守去重
 src/resources.js   资源路径白名单与敏感地址过滤
 src/home.js        基于缓存的账号观看快照

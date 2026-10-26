@@ -1,21 +1,15 @@
 # Infuse 观看记录接入路线
 
-初稿：2026-10-24；更新：2026-10-26。初稿基线：`7e1f618`，交付版映览 0.1.18/build 19。当前状态：独立应用注册、设备码授权、真实已看与进度读取、正式应用同步及本机安装完成。Apple TV 新播放到 Trakt 的上传延迟未单独测量。
-
-后续 0.1.19/build 20 已交付：首页加入最近观看／续播海报，完整观看页改为海报网格。图片优先使用已配置的 TMDB，按作品 ID 匹配并缓存本机；保留 Trakt 图片来源。真实首页 14 张不同作品海报与离线显示已验收，详见[验收记录](../macOS验收记录.md)。
+初稿：2026-10-24；更新：2026-10-26。初稿基线：`7e1f618`；当前交付：映览 0.1.20/build 21。独立授权、观看同步、首页与列表海报、账号配置入口均已交付并完成本机安装验证。操作以[使用说明](../macOS使用说明.md#0120账号配置与导航)为准，分版本测试、真实快照和安装核验见[验收记录](../macOS验收记录.md)。
 
 ## 当前进展与验证边界
 
-- 已新增独立 Trakt 原生页面：最近已看、全部已看、继续观看，支持搜索、类型筛选、分页、手动同步、停止、重新授权和清除本机缓存。
-- 设备码授权只需要 Client ID。OAuth 请求发往 `auth.trakt.tv`，资料读取发往 `api.trakt.tv`；使用映览独立令牌，不复用 PixelReel 或 Infuse 的现有令牌。所有远端请求共用至少 2 秒间隔的 RateLimiter，并遵守 Retry-After。
-- 令牌加密保存；刷新令牌单次使用，先保存新令牌再继续请求。只读白名单限制观看数据请求为 GET；失败保留旧缓存，完整分页及全部集合成功后原子提交；重新授权核实身份后清除旧账号缓存。
-- 用户希望复用 PixelReel 注册信息，允许只读相关 `.env`。旧 Client ID 请求设备码返回 HTTP 401 / `invalid_client` / `client not found`，公共 API 返回 403。未修改原项目配置，未复制 Client Secret 或既有令牌。
-- 曾误用浏览器已有的另一个账号查看应用页；用户纠正后重新核对正确账号。绑定 GitHub 后仍未找到旧应用，旧 Client ID 再试仍返回 `client not found`；用户最终确认注册映览自己的应用。旧应用消失原因未知，不据[同类讨论 #898](https://github.com/trakt/trakt-api/discussions/898)推断当前账号原因。
-- 2026-10-26，用户手动完成 GitHub 绑定并明确同意 API 条款；成功创建「映览 EmbyScope」Development 应用，页面显示 Approved。用户批准并完成设备授权，程序在读取观看记录前核实返回账号与用户指定账号一致。未使用 PixelReel 配置，也未发行 Client Secret。
-- 首次真实同步成功：最近已看 48 条；全部已看 3,835 条（电影 241、单集 3,594）；续播 20 条（电影 3、单集 17），进度范围 1.7414%–79%。三个集合身份不重复，展示时间均有效。计数只是本次快照，不应当作长期固定值；私人片名、用户名、Client ID 和令牌不写入仓库。
-- Node 120 项测试、Swift 40 项测试通过；隔离模拟原生验收覆盖翻页、季集、进度和筛选空状态。随后在正式安装版再次手动同步，缓存更新时间推进，三个集合计数一致，真实续播在界面显示。
-- 已备份旧 App 与完整配置，并比对原有 12 张表和密钥；迁移只新增 Trakt 授权、错误状态和缓存，原表内容保持一致。正式 App 启动后按原设置继续服务器自动更新，该正常运行变化不计为迁移改动。
-- App/DMG 0.1.18/build 19 已构建、只读挂载核验，安装包与构建的 34 个文件一致，源码、签名、SHA-256、Applications 入口和中文说明通过。仅本机临时签名，未经 Apple 公证。详见[验收记录](../macOS验收记录.md)。
+- 首页展示最近已看与续播海报，各最多 8 部作品，同剧保留最新一集，可切换服务器记录；完整 Trakt 页面保留单集、搜索、类型筛选和分页，支持手动同步与停止。
+- 「Trakt 观看 → 账号与配置」集中展示实际账号、授权状态、同步时间与数据来源，管理重新授权、切换及断开；应用配置与海报来源分别展开。「服务器设置」位于导航最后。
+- 设备码只需 Client ID。OAuth 发往 `auth.trakt.tv`，资料读取发往 `api.trakt.tv`；使用映览独立令牌，不复用 PixelReel 或 Infuse 的 Trakt 凭据。同服务请求至少间隔 2 秒，并遵守 Retry-After。令牌加密保存，刷新轮换后先保存新令牌；观看请求受 GET 白名单限制，完整分页与全部集合成功后原子提交，失败保留旧快照。
+- 旧 PixelReel Client ID 曾返回 HTTP 401 / `invalid_client` / `client not found`；浏览器还曾登录错误账号。核对正确账号、重新查找后仍未找到可用旧应用，用户于 2026-10-26 完成 GitHub 绑定、同意条款并注册「映览 EmbyScope」，随后批准并完成设备码授权。旧应用消失原因未知，不能根据其他账号或同类讨论推断。
+- 海报优先使用已配置的 TMDB，按作品 ID 匹配并缓存本机；未配置时使用 Trakt 图片。TMDB 凭据在用户授权下从既有配置读取，独立加密保存，与 Trakt 授权分开维护，未修改 PixelReel 原配置。真实首页 14 张不同作品海报及离线显示已验收，不代表全量已看都有图。失败路径及复用方法见[Trakt 接入经验](../lessons/trakt-sync-posters.md)。
+- 正确账号的三个观看集合、正式 App 手动同步及界面显示已验证；Apple TV 新播放上传延迟、设备归属与真实令牌到期后的长期续期仍未实测。刷新轮换有模拟覆盖。App／DMG 仅为本机临时签名，未经 Apple 公证。
 
 ## 目标与推荐判断
 
@@ -27,7 +21,7 @@
 
 ## 已核实依据
 
-初稿使用 Tavily 定位官方资料，再读取 Firecore 官方文档与 Trakt 官方 API 合约。后续按用户授权完成开发者注册、独立设备码授权和真实同步；没有启动 Infuse或读取其私有数据库。安装后映览按用户既有设置运行服务器自动更新。
+初稿使用 Tavily 定位官方资料，再读取 Firecore 官方文档与 Trakt 官方 API 合约。后续按用户授权完成开发者注册、独立设备码授权和真实同步；没有启动 Infuse 或读取其私有数据库。安装后映览按用户既有设置运行服务器自动更新。
 
 | 依据 | 结论与适用范围 |
 | --- | --- |
@@ -37,7 +31,7 @@
 | [Trakt 进度字段](https://github.com/trakt/trakt-api/blob/master/projects/api/src/contracts/sync/schema/response/playbackItemResponseSchema.ts) | 包含 `progress`（0–100）、`paused_at` 和记录 `id`；这是进度快照，不是本机文件的秒级播放位置。 |
 | [Trakt OAuth 指南](https://github.com/trakt/trakt-api/blob/master/projects/developer/src/lib/guides/authentication-oauth.md) | 设备码无需 Client Secret；授权、轮询、刷新走独立认证域名，轮询遵守返回间隔与有效期。 |
 | [Trakt 分页变更 #775](https://github.com/trakt/trakt-api/discussions/775)，2026-04-29 发布、05-27 更新 | 已看接口必须分页；剧集的 seasons/episodes 需要 `extended=progress`，不能使用 `extended=full` 假定仍有进度字段。代码和模拟断言已据此修正。 |
-| [本项目首页](../../src/home.js)、[条目规范化](../../src/identity.js) | 首页从 `catalog/latest/resume` 缓存读取每条目的最后播放时间；规范化保留 `PlaybackPositionTicks`、`LastPlayedDate`，未保留 `Played`。现有最近观看不是 Infuse 专属记录，也不是完整观看历史。 |
+| [本项目首页](../../src/home.js)、[条目规范化](../../src/identity.js) | 首页从 `catalog/latest/resume` 缓存读取每条目的最后播放时间；规范化保留 `PlaybackPositionTicks`、`LastPlayedDate`，未保留 `Played`。这里的服务器最近观看不是 Infuse 专属记录，也不是完整观看历史；Trakt 由独立模块读取。 |
 
 旧 Apiary 文档入口本轮返回 502，未将其视为接口失效；改用官方仓库合约。Tavily 的自动摘要曾将整页其他方法的 VIP 提示混入进度查询结论，未据此判断进度读取必须付费。收费限制、应用权限、分页行为以实施时最新官方文档和实际账号响应为准。
 
@@ -63,7 +57,7 @@
 
 ## 后续工程边界
 
-现已新增 Trakt 客户端、凭据生命周期、本机缓存与原生展示，复用 [RateLimiter](../../src/emby.js) 和 [本机加密能力](../../src/store.js)。缓存独立存放于 `trakt_cache`；没有复用 Emby 的远端身份或把 Trakt 对象硬塞进服务器条目结构。
+现已新增 Trakt 客户端、凭据生命周期、本机缓存与原生展示，复用 [RateLimiter](../../src/emby.js) 和 [本机加密能力](../../src/store.js)。观看快照独立存放于 `trakt_cache`，海报存于 `trakt_posters`；`settings` 中的 `traktCredentials` 与 `traktPosterCredentials` 分别加密保存授权和海报凭据。没有复用 Emby 的远端身份或把 Trakt 对象硬塞进服务器条目结构。
 
 实际读取记录使用 GET；OAuth 换取／刷新令牌属于必要认证操作。产品承诺只读须由请求白名单保证，不能未经核实宣称 Trakt 授权本身只有只读权限。失败保留带时间的旧缓存；账号切换须隔离数据，未获取完整分页不能覆盖全量已看集合。使用前重新核对官方分页、删除与撤销标记语义。
 

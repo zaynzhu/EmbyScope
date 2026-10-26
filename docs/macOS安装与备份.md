@@ -47,9 +47,9 @@ node scripts/import-pixelreel.mjs \
 
 ## Trakt 观看记录
 
-从 0.1.18 起，顶部「Trakt 观看」可用独立设备码授权读取最近已看、全量已看电影／单集和续播百分比。使用自己注册的 Client ID，无需 Client Secret；详情见 [Trakt 使用说明](macOS使用说明.md#0118trakt-观看记录)。不用打开 Mac Infuse，Apple TV Infuse 须已将记录上传到同一 Trakt 账号。首版手动同步，不修改远端记录。
+顶部「Trakt 观看 → 账号与配置」集中管理账号授权、应用配置和海报来源。使用自己注册的 Client ID，无需 Client Secret，设备码授权后手动同步最近已看、全量已看电影／单集和续播百分比；详情见 [Trakt 使用说明](macOS使用说明.md#0120账号配置与导航)。不用打开 Mac Infuse，Apple TV Infuse 须已将记录上传到同一 Trakt 账号；映览不修改远端观看记录。
 
-配置备份包含加密授权及 `trakt_cache` 本地缓存，必须与 `secret.key` 一起保护。升级只新增独立缓存表和对应设置项，不改变已有 Emby、豆瓣或 S3 配置。断开只清除此来源的本机令牌和缓存；远端授权可在 Trakt 设置中管理。
+首页展示 Trakt 最近观看和续播海报，图片按作品 ID 获取并缓存。完整配置备份包含加密 Trakt 授权、独立的 TMDB 海报凭据、`trakt_cache` 观看快照和 `trakt_posters` 图片缓存，必须与 `secret.key` 一起保护；凭据不会打包进 App／DMG。断开账号清除此来源的本机令牌、观看与图片缓存，保留 Client ID 和海报配置；远端授权可在 Trakt 设置中管理。相关升级不改变已有 Emby、豆瓣或 S3 配置。
 
 ## 配置与离线导入
 
@@ -92,5 +92,3 @@ APP="/Applications/EmbyScope.app"
 ## 0.1.15 数据兼容说明
 
 升级只新增本机 `sync_runs` 执行记录表，不改原连接、周期、片库、豆瓣条目或 S3 配置。完整配置备份会包含该表；从本版开始积累记录，旧版没有的历史不会被推算补造。删除本机连接时，对应同步记录一并删除。
-
-从 0.1.19 起，已连接 Trakt 的首页展示最近观看和续播海报。图片及 TMDB 读取凭据保存在同一配置目录中，随完整配置备份；凭据不会打包进 App／DMG。
