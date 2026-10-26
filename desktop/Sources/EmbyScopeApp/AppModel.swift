@@ -3,15 +3,16 @@ import Observation
 import EmbyScopeCore
 
 enum Page: String, CaseIterable {
-  case home = "此刻", overview = "概览", library = "片库", douban = "豆瓣已看", duplicates = "重复与刮削排查", settings = "服务器设置"
+  case home = "此刻", overview = "概览", library = "片库", douban = "豆瓣已看", duplicates = "重复与刮削排查", settings = "服务器设置", trakt = "Trakt 观看"
   var symbol: String {
-    switch self { case .home: "sparkles.tv"; case .overview: "square.grid.2x2"; case .library: "rectangle.stack"; case .douban: "checkmark.seal"; case .duplicates: "square.on.square"; case .settings: "externaldrive" }
+    switch self { case .home: "sparkles.tv"; case .overview: "square.grid.2x2"; case .library: "rectangle.stack"; case .douban: "checkmark.seal"; case .duplicates: "square.on.square"; case .settings: "externaldrive"; case .trakt: "clock.arrow.circlepath" }
   }
 }
 
 @MainActor @Observable
 final class AppModel {
   let douban = DoubanModel()
+  let trakt = TraktModel()
   let inventory = InventoryModel()
   let backend = BackendProcess()
   let demo = CommandLine.arguments.contains("--demo")
@@ -103,6 +104,7 @@ final class AppModel {
   }
   private func clearSession() {
     douban.clear()
+    trakt.clear()
     inventory.clear()
     generation += 1
     serverStatusError = nil
@@ -122,6 +124,11 @@ final class AppModel {
   }
   func loadScope() async {
     guard let client else { return }
+    if page == .trakt {
+      await trakt.loadStatus(client)
+      await trakt.refreshList(client)
+      return
+    }
     if page == .douban {
       await douban.loadStatus(client)
       await douban.load(client, page: douban.result?.page ?? 1)

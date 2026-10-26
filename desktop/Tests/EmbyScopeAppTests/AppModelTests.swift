@@ -63,6 +63,79 @@ struct AppModelTests {
       "recent": [], "resume": [], "sources": [], "historyAvailable": false, "historyNote": "保留首页内容"
     ]))
   }
+  private func traktStatus(updatedAt: String? = nil, account: String = "fixture-user") -> [String: Any] {
+    var value: [String: Any] = ["configured": true, "connected": true, "account": account, "state": "idle", "offline": false, "counts": ["recent": 1, "watched": 1, "playback": 1]]
+    if let updatedAt { value["updatedAt"] = updatedAt }
+    return value
+  }
+  private func traktList(_ title: String, page: Int = 1) -> [String: Any] {
+    ["items": [["id": "movie:1", "title": title, "type": "movie"]], "page": page, "pages": 3, "total": 60, "available": true]
+  }
+  @Test func traktRefreshKeepsPageAndFilterChangesResetPage() async {
+    let (app, requests) = fixture()
+    let first = Task { await app.trakt.load(app.client!, page: 2) }
+    let request = await requests.next()
+    request.respond(traktList("第二页", page: 2))
+    await first.value
+    let refresh = Task { await app.trakt.refreshList(app.client!) }
+    let refreshRequest = await requests.next()
+    #expect(refreshRequest.request.url?.query?.contains("page=2") == true)
+    refreshRequest.respond(traktList("刷新后的第二页", page: 2))
+    await refresh.value
+    app.trakt.kind = "playback"
+    let filtered = Task { await app.trakt.refreshList(app.client!) }
+    let filterRequest = await requests.next()
+    #expect(filterRequest.request.url?.query?.contains("page=1") == true)
+    #expect(filterRequest.request.url?.query?.contains("kind=playback") == true)
+    #expect(app.trakt.result == nil)
+    filterRequest.respond(traktList("续播第一页"))
+    await filtered.value
+    #expect(app.trakt.result?.items.first?.title == "续播第一页")
+  }
+  @Test func traktOldResponseCannotReplaceFilterOrClearedSession() async {
+    let (app, requests) = fixture()
+    let first = Task { await app.trakt.load(app.client!) }
+    let oldRequest = await requests.next()
+    app.trakt.query = "新筛选"
+    let second = Task { await app.trakt.refreshList(app.client!) }
+    let newRequest = await requests.next()
+    newRequest.respond(traktList("新的记录"))
+    await second.value
+    oldRequest.respond(traktList("旧的记录"))
+    await first.value
+    #expect(app.trakt.result?.items.first?.title == "新的记录")
+    let status = Task { await app.trakt.loadStatus(app.client!) }
+    let statusRequest = await requests.next()
+    app.trakt.clear()
+    statusRequest.respond(traktStatus())
+    await status.value
+    #expect(app.trakt.status == nil)
+    #expect(app.trakt.result == nil)
+  }
+  @Test func traktStatusFailureKeepsSnapshotAndChangedAccountClearsList() async {
+    let (app, requests) = fixture()
+    let status = Task { await app.trakt.loadStatus(app.client!) }
+    let statusRequest = await requests.next()
+    statusRequest.respond(traktStatus(updatedAt: "2026-10-24T12:00:00Z"))
+    await status.value
+    let list = Task { await app.trakt.load(app.client!) }
+    let listRequest = await requests.next()
+    listRequest.respond(traktList("原账号记录"))
+    await list.value
+    let failed = Task { await app.trakt.loadStatus(app.client!) }
+    let failureRequest = await requests.next()
+    failureRequest.respond(["error": "模拟读取失败"], status: 500)
+    await failed.value
+    #expect(app.trakt.status?.account == "fixture-user")
+    #expect(app.trakt.result?.items.first?.title == "原账号记录")
+    #expect(app.trakt.statusError == "模拟读取失败")
+    let changed = Task { await app.trakt.loadStatus(app.client!) }
+    let changedRequest = await requests.next()
+    changedRequest.respond(traktStatus(account: "other-user"))
+    await changed.value
+    #expect(app.trakt.result == nil)
+    #expect(app.trakt.statusError == nil)
+  }
   @Test func inventoryScopeChangeRejectsOldResponsesAndClearsOnSessionEnd() async {
     let (model, requests) = fixture()
     let first = Task { await model.inventory.load(model.client!, server: "a") }
