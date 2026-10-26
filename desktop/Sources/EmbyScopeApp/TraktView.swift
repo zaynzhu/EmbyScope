@@ -6,11 +6,7 @@ struct TraktView: View {
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.openURL) private var openURL
   @State private var applicationActive = NSApplication.shared.isActive
-  @State private var showConfiguration = false
-  @State private var clientId = ""
-  @State private var showPosterConfiguration = false
-  @State private var tmdbToken = ""
-  @State private var confirmDisconnect = false
+  @State private var showAccountSettings = false
   private var visible: Bool { applicationActive && scenePhase == .active && app.page == .trakt && app.authenticated }
   private var disabled: Bool { app.demo || app.offline || app.trakt.saving }
 
@@ -29,12 +25,8 @@ struct TraktView: View {
         } else {
           Button("连接 Trakt") { act("connect") }.buttonStyle(GoldButton()).disabled(disabled || model.status?.configured != true)
         }
-        Menu {
-          Button("配置应用 Client ID") { clientId = ""; showConfiguration = true }
-          Button("海报配置") { tmdbToken = ""; showPosterConfiguration = true }
-          if model.status?.connected == true { Button("重新授权") { act("connect") }.disabled(model.status?.busy == true) }
-          Button("断开并清除本机 Trakt 缓存", role: .destructive) { confirmDisconnect = true }
-        } label: { Image(systemName: "gearshape") }.disabled(disabled).accessibilityLabel("Trakt 连接设置")
+        Button("账号与配置", systemImage: "person.crop.circle") { showAccountSettings = true }
+
       }
       if let status = model.status {
         HStack {
@@ -44,7 +36,7 @@ struct TraktView: View {
           Text("已看 \(status.counts.watched) · 续播 \(status.counts.playback)")
         }.font(.caption).foregroundStyle(Theme.secondary)
         if !status.configured {
-          HStack { Text("首次使用需要配置你注册的 Trakt 应用 Client ID。"); Button("配置应用") { showConfiguration = true } }
+          HStack { Text("首次使用需要配置你注册的 Trakt 应用 Client ID。"); Button("配置应用") { showAccountSettings = true } }
             .font(.callout).disabled(disabled)
         }
         if let device = status.device {
@@ -110,45 +102,7 @@ struct TraktView: View {
         do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
         await model.refreshList(client)
       }
-      .sheet(isPresented: $showConfiguration) {
-        VStack(alignment: .leading, spacing: 18) {
-          Text("Trakt 应用配置").font(.title3.weight(.semibold))
-          Text("填写自己的应用 Client ID，无需 Client Secret。更换应用会断开现有授权并清除本机 Trakt 缓存。").font(.callout)
-          TextField("Client ID", text: $clientId).textFieldStyle(.roundedBorder)
-          HStack { Spacer(); Button("取消") { showConfiguration = false }; Button("保存应用配置") {
-            Task {
-              if let client = app.client { await model.action(client, path: "api/trakt/settings", method: "PUT", fields: ["clientId": clientId.trimmingCharacters(in: .whitespacesAndNewlines)]) }
-              if model.statusError == nil { showConfiguration = false; clientId = "" }
-            }
-          }.disabled(clientId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.saving) }
-          if let error = model.statusError { Text(error).font(.caption).foregroundStyle(Theme.accent) }
-        }.padding(28).frame(width: 520)
-      }
-      .sheet(isPresented: $showPosterConfiguration) {
-        VStack(alignment: .leading, spacing: 18) {
-          Text("海报配置").font(.title3.weight(.semibold))
-          Text(model.status?.posterConfigured == true ? "已配置 TMDB，海报按作品 ID 获取并缓存到本机。" : "默认使用 Trakt 海报。配置 TMDB 可从 TMDB 获取海报。")
-          SecureField("TMDB API 读取令牌或 API Key", text: $tmdbToken).textFieldStyle(.roundedBorder)
-          Text("凭据仅加密保存在本机，不会修改观看记录。保存后重新载入图片。").font(.caption).foregroundStyle(Theme.secondary)
-          HStack {
-            Button("取消") { showPosterConfiguration = false }
-            Spacer()
-            if model.status?.posterConfigured == true { Button("使用 Trakt 图片") { savePosters("") } }
-            Button("保存") { savePosters(tmdbToken) }.disabled(tmdbToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          }.disabled(model.saving)
-          if let error = model.statusError { Text(error).font(.caption).foregroundStyle(Theme.accent) }
-        }.padding(28).frame(width: 520)
-      }
-      .alert("断开 Trakt？", isPresented: $confirmDisconnect) {
-        Button("取消", role: .cancel) {}
-        Button("断开并清除本机缓存", role: .destructive) { act("disconnect") }
-      } message: { Text("仅清除映览保存的授权与 Trakt 缓存，保留应用 Client ID；不会删除 Trakt 网站的记录或修改 PixelReel。远端应用授权可在 Trakt 设置中管理。") }
-  }
-  private func savePosters(_ token: String) {
-    Task {
-      if let client = app.client { await app.trakt.action(client, path: "api/trakt/poster-settings", method: "PUT", fields: ["tmdbToken": token.trimmingCharacters(in: .whitespacesAndNewlines)]) }
-      if app.trakt.statusError == nil { PosterCache.shared.clear(); app.trakt.imagesRevision += 1; showPosterConfiguration = false; tmdbToken = "" }
-    }
+      .sheet(isPresented: $showAccountSettings) { TraktSettingsView() }
   }
   private func act(_ action: String) { Task { if let client = app.client { await app.trakt.action(client, path: "api/trakt/\(action)") } } }
   private func loadPage(_ page: Int) { Task { if let client = app.client { await app.trakt.load(client, page: page) } } }

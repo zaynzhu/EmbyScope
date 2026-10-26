@@ -3,7 +3,7 @@ import Observation
 import EmbyScopeCore
 
 enum Page: String, CaseIterable {
-  case home = "此刻", overview = "概览", library = "片库", douban = "豆瓣已看", duplicates = "重复与刮削排查", settings = "服务器设置", trakt = "Trakt 观看"
+  case home = "此刻", overview = "概览", library = "片库", douban = "豆瓣已看", duplicates = "重复与刮削排查", trakt = "Trakt 观看", settings = "服务器设置"
   var symbol: String {
     switch self { case .home: "sparkles.tv"; case .overview: "square.grid.2x2"; case .library: "rectangle.stack"; case .douban: "checkmark.seal"; case .duplicates: "square.on.square"; case .settings: "externaldrive"; case .trakt: "clock.arrow.circlepath" }
   }
