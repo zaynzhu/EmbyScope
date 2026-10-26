@@ -4,6 +4,11 @@ import EmbyScopeCore
 struct HomeView: View {
   @Environment(AppModel.self) private var app
   @State private var appeared = false
+  @State private var serverRecords = false
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var applicationActive = NSApplication.shared.isActive
+  private var visible: Bool { applicationActive && scenePhase == .active && app.page == .home && app.authenticated }
+  private var hasTrakt: Bool { app.trakt.home?.status.connected == true || app.trakt.home?.status.updatedAt != nil }
   var body: some View {
     ScrollViewReader { scroll in
       ScrollView {
@@ -17,7 +22,21 @@ struct HomeView: View {
             Text(Date.now.formatted(.dateTime.month().day().weekday(.wide).locale(Locale(identifier: "zh_CN"))))
               .font(.system(size: 12)).foregroundStyle(Theme.secondary)
           }
-          if let home = app.home {
+          if hasTrakt {
+            Picker("观看记录来源", selection: $serverRecords) {
+              Text("Trakt 观看").tag(false)
+              Text("服务器记录").tag(true)
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 250)
+          }
+          if let error = app.trakt.homeError {
+            HStack {
+              Text("Trakt 记录读取失败：\(error)").font(.caption).foregroundStyle(Theme.accent)
+              Button("重试") { app.trakt.retryStatus() }
+            }
+          }
+          if hasTrakt && !serverRecords {
+            TraktHomeSection()
+          } else if let home = app.home {
             HStack(spacing: 16) {
               ForEach(app.servers.filter { app.server == "all" || $0.id == app.server }) { server in
                 Label("\(server.name) · \(server.statusLabel)", systemImage: server.status == "online" ? "externaldrive" : "externaldrive.badge.exclamationmark")
@@ -88,6 +107,16 @@ struct HomeView: View {
           } else if app.loading { ProgressView("正在读取本地快照…").frame(maxWidth: .infinity, minHeight: 300) }
         }.padding(30).frame(maxWidth: 1300).frame(maxWidth: .infinity)
           .opacity(appeared ? 1 : 0).offset(y: appeared ? 0 : 10)
+      }
+      .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in applicationActive = true }
+      .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in applicationActive = false }
+      .task(id: "\(visible)-\(app.trakt.pollRevision)") {
+        guard visible, let client = app.client else { return }
+        repeat {
+          await app.trakt.loadHome(client)
+          guard app.trakt.homeError == nil, app.trakt.status?.busy == true else { return }
+          do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        } while !Task.isCancelled
       }
       .onAppear { withAnimation(app.reduceMotion ? nil : .easeOut(duration: 0.45)) { appeared = true } }
     }

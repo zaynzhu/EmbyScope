@@ -21,13 +21,15 @@ final class PosterCache {
   init() { images.totalCostLimit = 24 * 1024 * 1024; images.countLimit = 64 }
   func clear() { pending.values.forEach { $0.cancel() }; pending.removeAll(); images.removeAllObjects() }
   func load(_ item: Media, client: APIClient, hero: Bool = false) async -> NSImage? {
-    let maxPixels = hero ? 1280 : 480
-    let key = item.key + ":" + (item.imageTag ?? "") + ":\(maxPixels)"
+    guard item.imageTag != nil else { return nil }
+    return await load(path: await client.itemPath(item, suffix: "/poster"), key: item.key + ":" + (item.imageTag ?? ""), client: client, maxPixels: hero ? 1280 : 480)
+  }
+  func load(path: String, key: String, client: APIClient, maxPixels: Int = 480) async -> NSImage? {
+    let key = key + ":\(maxPixels)"
     if let image = images.object(forKey: key as NSString) { return image }
     if let task = pending[key] { return await task.value }
     let task = Task<NSImage?, Never> {
-      guard item.imageTag != nil,
-            let data = try? await client.data(await client.itemPath(item, suffix: "/poster")), !Task.isCancelled else { return nil }
+      guard let data = try? await client.data(path, image: true), !Task.isCancelled else { return nil }
       let thumbnail = await Task.detached(priority: .utility) { () -> CGImage? in
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maxPixels, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true] as CFDictionary)

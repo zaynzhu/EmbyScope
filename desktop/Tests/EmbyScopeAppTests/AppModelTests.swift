@@ -71,6 +71,29 @@ struct AppModelTests {
   private func traktList(_ title: String, page: Int = 1) -> [String: Any] {
     ["items": [["id": "movie:1", "title": title, "type": "movie"]], "page": page, "pages": 3, "total": 60, "available": true]
   }
+  @Test func traktHomeRejectsOldResponseAfterClearAndKeepsSnapshotOnFailure() async {
+    let (app, requests) = fixture()
+    let snapshot: [String: Any] = ["status": traktStatus(), "recent": [["id": "movie:1", "title": "首页电影", "type": "movie", "posterPath": "api/trakt/posters/movies/1"]], "playback": []]
+    let first = Task { await app.trakt.loadHome(app.client!) }
+    let request = await requests.next()
+    request.respond(snapshot)
+    await first.value
+    #expect(app.trakt.home?.recent.first?.posterPath == "api/trakt/posters/movies/1")
+    let failed = Task { await app.trakt.loadHome(app.client!) }
+    let failedRequest = await requests.next()
+    failedRequest.respond(["error": "模拟读取失败"], status: 503)
+    await failed.value
+    #expect(app.trakt.home?.recent.first?.title == "首页电影")
+    #expect(app.trakt.homeError == "模拟读取失败")
+    let stale = Task { await app.trakt.loadHome(app.client!) }
+    let staleRequest = await requests.next()
+    app.trakt.clear()
+    staleRequest.respond(snapshot)
+    await stale.value
+    #expect(app.trakt.home == nil)
+    #expect(app.trakt.status == nil)
+  }
+
   @Test func traktRefreshKeepsPageAndFilterChangesResetPage() async {
     let (app, requests) = fixture()
     let first = Task { await app.trakt.load(app.client!, page: 2) }

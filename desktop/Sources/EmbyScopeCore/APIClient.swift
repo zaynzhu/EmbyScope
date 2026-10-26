@@ -10,6 +10,7 @@ public actor APIClient {
   private let base: URL
   private let key: String
   private let session: URLSession
+  private let imageSession: URLSession
   public init(port: Int, key: String, configuration: URLSessionConfiguration = .ephemeral) {
     base = URL(string: "http://127.0.0.1:\(port)")!
     self.key = key
@@ -17,6 +18,10 @@ public actor APIClient {
     configuration.httpMaximumConnectionsPerHost = 4
     configuration.urlCache = nil
     session = URLSession(configuration: configuration)
+    // 图片需排队遵守远端限流，单独连接池避免挡住状态、列表和取消操作。
+    let imageConfiguration = configuration.copy() as! URLSessionConfiguration
+    imageConfiguration.timeoutIntervalForRequest = 90
+    imageSession = URLSession(configuration: imageConfiguration)
   }
   private func request(_ path: String, query: [String: String], method: String, body: Data?) -> URLRequest {
     var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
@@ -31,8 +36,8 @@ public actor APIClient {
     request.setValue(base.absoluteString, forHTTPHeaderField: "Origin")
     return request
   }
-  public func data(_ path: String, query: [String: String] = [:], method: String = "GET", body: Data? = nil) async throws -> Data {
-    let (data, response) = try await session.data(for: request(path, query: query, method: method, body: body))
+  public func data(_ path: String, query: [String: String] = [:], method: String = "GET", body: Data? = nil, image: Bool = false) async throws -> Data {
+    let (data, response) = try await (image ? imageSession : session).data(for: request(path, query: query, method: method, body: body))
     guard let response = response as? HTTPURLResponse else { throw APIError(message: "本地服务响应无效", status: 0) }
     guard (200..<300).contains(response.statusCode) else {
       let message = (try? JSONSerialization.jsonObject(with: data) as? [String: String])?["error"] ?? "本地服务暂不可用"

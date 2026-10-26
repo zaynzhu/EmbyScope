@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { RateLimiter, RemoteError } from './emby.js'
+import { TraktPosters, posterUrl, withPoster } from './trakt-posters.js'
 
 const API_ORIGIN = 'https://api.trakt.tv'
 const AUTH_ORIGIN = 'https://auth.trakt.tv'
@@ -22,9 +23,10 @@ export function traktItem(value, type) {
   if (type === 'episode' && (!id(show?.ids?.trakt) || !text(show?.title) || !Number.isInteger(media.season) || media.season < 0 || !Number.isInteger(media.number) || media.number < 0)) throw invalid()
   return {
     id: `${type}:${mediaId}`, type, title, year: Number.isInteger(media.year) ? media.year : null,
-    showTitle: show?.title ?? null, showId: id(show?.ids?.trakt),
+    showTitle: show?.title ?? null, showId: id(show?.ids?.trakt), showTmdbId: id(show?.ids?.tmdb),
     season: type === 'episode' ? media.season : null, episode: type === 'episode' ? media.number : null,
     traktId: mediaId, tmdbId: id(media.ids.tmdb), imdbId: /^tt\d+$/.test(media.ids.imdb ?? '') ? media.ids.imdb : null,
+    posterUrl: posterUrl((show ?? media).images?.poster?.[0]),
     watchedAt: null, pausedAt: null, progress: null, plays: null
   }
 }
@@ -44,6 +46,7 @@ export class TraktService {
     this.stopping = false
     this.retryAt = 0
     this.store.db.exec('CREATE TABLE IF NOT EXISTS trakt_cache (kind TEXT PRIMARY KEY, data TEXT NOT NULL, updatedAt TEXT NOT NULL)')
+    this.posters = new TraktPosters(this)
   }
   read(name, encrypted = false) {
     const row = this.store.db.prepare('SELECT value FROM settings WHERE name=?').get(name)
@@ -58,6 +61,7 @@ export class TraktService {
     const credentials = this.credentials()
     const caches = this.store.db.prepare('SELECT kind, updatedAt, json_array_length(data) AS count FROM trakt_cache').all()
     return {
+      posterConfigured: !!this.read('traktPosterCredentials', true)?.tmdbToken,
       configured: !!credentials.clientId, connected: !!credentials.accessToken,
       account: credentials.account || null, state: this.state, offline: this.offline(),
       error: this.read('traktError'), updatedAt: caches[0]?.updatedAt ?? null,
@@ -75,7 +79,20 @@ export class TraktService {
     const items = (row ? JSON.parse(row.data) : []).filter(item => (!type || item.type === type) && (!q || `${item.title} ${item.showTitle || ''}`.toLocaleLowerCase().includes(q)))
     const pages = Math.max(1, Math.ceil(items.length / 24))
     const page = Math.min(pages, Math.max(1, Number.parseInt(params.get('page'), 10) || 1))
-    return { items: items.slice((page - 1) * 24, page * 24), total: items.length, pages, page, updatedAt: row?.updatedAt ?? null, available: !!row }
+    return { items: items.slice((page - 1) * 24, page * 24).map(withPoster), total: items.length, pages, page, updatedAt: row?.updatedAt ?? null, available: !!row }
+  }
+  home() {
+    const collection = kind => {
+      const row = this.store.db.prepare('SELECT data FROM trakt_cache WHERE kind=?').get(kind)
+      const seen = new Set()
+      return (row ? JSON.parse(row.data) : []).map(withPoster).filter(item => {
+        const key = item.posterPath || item.id
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).slice(0, 8)
+    }
+    return { status: this.status(), recent: collection('recent'), playback: collection('playback') }
   }
   ensureOnline() {
     if (this.stopping || this.offline()) throw new RemoteError('离线模式或应用退出中，未访问 Trakt', 409)
@@ -89,6 +106,7 @@ export class TraktService {
   }
   disconnect() {
     this.cancel()
+    this.posters.clear()
     const clientId = this.credentials().clientId
     this.store.db.exec('BEGIN')
     try {
@@ -113,14 +131,14 @@ export class TraktService {
   async request(path, { body, token, signal, clientId, allowPending = false } = {}) {
     const oauth = ['/oauth/device/code', '/oauth/device/token', '/oauth/token'].includes(path)
     const pathname = path.split('?')[0]
-    if (!oauth && !['/users/settings', '/sync/history', '/sync/watched/movies', '/sync/watched/shows', '/sync/playback'].includes(pathname)) throw new RemoteError('Trakt 请求不在只读白名单内', 400)
+    if (!oauth && !/^\/(movies|shows)\/[1-9]\d{0,19}$/.test(pathname) && !['/users/settings', '/sync/history', '/sync/watched/movies', '/sync/watched/shows', '/sync/playback'].includes(pathname)) throw new RemoteError('Trakt 请求不在只读白名单内', 400)
     if (!oauth && body) throw new RemoteError('不允许修改 Trakt 记录', 400)
     return this.limiter.run('trakt', async () => {
       this.ensureOnline()
       if (this.now() < this.retryAt) throw new RemoteError('Trakt 正在限流，请稍后重试', 429)
       const response = await this.fetchImpl(`${oauth ? AUTH_ORIGIN : API_ORIGIN}${path}`, {
         method: body ? 'POST' : 'GET', redirect: 'manual',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'EmbyScope/0.1.18', 'trakt-api-version': '2', 'trakt-api-key': clientId, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'EmbyScope/0.1.19', 'trakt-api-version': '2', 'trakt-api-key': clientId, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.any([signal, AbortSignal.timeout(25000)])
       })
@@ -198,6 +216,7 @@ export class TraktService {
         this.check(revision, signal)
         if (!text(settings?.user?.username, 200) || !text(settings.user.ids?.slug, 200)) throw invalid()
         // 新账号完成身份确认后才替换授权，同时清掉旧账号快照。
+        this.posters.clear()
         this.store.db.exec('BEGIN')
         try {
           this.write('traktCredentials', { clientId, ...tokens, account: settings.user.username, accountId: settings.user.ids.slug }, true)
@@ -296,7 +315,7 @@ export class TraktService {
           for (const episode of season.episodes) {
             if (!Number.isInteger(episode.number) || episode.number < 0 || !Number.isInteger(episode.plays) || episode.plays < 1 || !date(episode.last_watched_at) || !text(value.show.title)) throw invalid()
             // 已看接口可能只有剧集编号和季集号，不能伪造单集 Trakt ID。
-            watched.push({ id: `show:${id(value.show.ids.trakt)}:${season.number}:${episode.number}`, type: 'episode', title: `第 ${episode.number} 集`, showTitle: value.show.title, showId: id(value.show.ids.trakt), season: season.number, episode: episode.number, year: null, traktId: null, tmdbId: null, imdbId: null, watchedAt: episode.last_watched_at, pausedAt: null, progress: null, plays: episode.plays })
+            watched.push({ id: `show:${id(value.show.ids.trakt)}:${season.number}:${episode.number}`, type: 'episode', title: `第 ${episode.number} 集`, showTitle: value.show.title, showId: id(value.show.ids.trakt), showTmdbId: id(value.show.ids.tmdb), season: season.number, episode: episode.number, year: null, traktId: null, tmdbId: null, imdbId: null, watchedAt: episode.last_watched_at, pausedAt: null, progress: null, plays: episode.plays })
             if (watched.length > MAX_ITEMS) throw invalid()
           }
         }
@@ -326,5 +345,5 @@ export class TraktService {
       throw error
     }
   }
-  async close() { this.stopping = true; this.cancel(); await this.job }
+  async close() { this.stopping = true; this.cancel(); await Promise.allSettled([this.job, this.posters.close()]) }
 }

@@ -1,3 +1,5 @@
+import { imageMime } from './image.js'
+export { imageMime } from './image.js'
 import { RateLimiter, RemoteError } from './emby.js'
 import { parseDoubanPage, validDoubanDate } from './douban-parser.js'
 import { DoubanPosters } from './douban-posters.js'
@@ -16,13 +18,6 @@ export function allowedPoster(value) {
     return url.protocol === 'https:' && !url.username && !url.password && !url.port && !url.search && !url.hash &&
       (/^img\d+\.doubanio\.com$/.test(url.hostname) || /^img\d+\.douban\.com$/.test(url.hostname) || url.hostname === 'image.tmdb.org')
   } catch { return false }
-}
-export function imageMime(bytes) {
-  bytes = Buffer.from(bytes)
-  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
-  if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png'
-  if (bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP') return 'image/webp'
-  return null
 }
 
 export class DoubanService {

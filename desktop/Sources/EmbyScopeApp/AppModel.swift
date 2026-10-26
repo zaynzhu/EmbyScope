@@ -150,6 +150,7 @@ final class AppModel {
       offline = settings.offline == true
       canExitOffline = settings.canExitOffline == true
       home = snapshot; overview = stats; error = nil
+      if page == .home { trakt.retryStatus() }
       loadedLibraryKey = nil
       if page == .library || page == .duplicates { await loadLibrary() }
     } catch { if current == generation { report(error) } }

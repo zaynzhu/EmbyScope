@@ -11,6 +11,7 @@ public struct TraktStatus: Decodable {
     public let watched: Int
     public let playback: Int
   }
+  public let posterConfigured: Bool?
   public let configured: Bool
   public let connected: Bool
   public let account: String?
@@ -35,6 +36,7 @@ public struct TraktItem: Decodable, Identifiable {
   public let pausedAt: String?
   public let progress: Double?
   public let plays: Int?
+  public let posterPath: String?
   public var displayTitle: String { showTitle ?? title }
   public var subtitle: String {
     if type == "episode" {
@@ -53,4 +55,10 @@ public struct TraktList: Decodable {
   public let pages: Int
   public let updatedAt: String?
   public let available: Bool
+}
+
+public struct TraktHome: Decodable {
+  public let status: TraktStatus
+  public let recent: [TraktItem]
+  public let playback: [TraktItem]
 }

@@ -6,6 +6,10 @@ import EmbyScopeCore
 final class TraktModel {
   var status: TraktStatus?
   var result: TraktList?
+  var imagesRevision = 0
+  var home: TraktHome?
+  var homeError: String?
+  private var homeGeneration = 0
   var kind = "recent"
   var query = ""
   var type = ""
@@ -22,7 +26,8 @@ final class TraktModel {
   private var loadedFilters: [String]?
 
   func clear() {
-    generation += 1; statusGeneration += 1; actionGeneration += 1
+    generation += 1; statusGeneration += 1; actionGeneration += 1; homeGeneration += 1
+    home = nil; homeError = nil
     status = nil; result = nil; error = nil; statusError = nil
     loading = false; saving = false; retryPage = 1
     kind = "recent"; query = ""; type = ""; loadedFilters = nil
@@ -30,6 +35,7 @@ final class TraktModel {
   }
   private func accept(_ next: TraktStatus) {
     if next.account != status?.account || next.connected != status?.connected {
+      homeGeneration += 1; home = nil
       generation += 1; result = nil; loadedFilters = nil; loading = false
     }
     if next.updatedAt != status?.updatedAt || next.account != status?.account || next.connected != status?.connected { listRevision += 1 }
@@ -45,6 +51,20 @@ final class TraktModel {
     } catch {
       guard !Task.isCancelled, request == statusGeneration else { return }
       statusError = error.localizedDescription
+    }
+  }
+  func loadHome(_ client: APIClient) async {
+    homeGeneration += 1; statusGeneration += 1
+    let request = homeGeneration
+    let statusRequest = statusGeneration
+    do {
+      let next: TraktHome = try await client.get("api/trakt/home")
+      guard !Task.isCancelled, request == homeGeneration, statusRequest == statusGeneration else { return }
+      accept(next.status)
+      home = next; homeError = nil
+    } catch {
+      guard !Task.isCancelled, request == homeGeneration, statusRequest == statusGeneration else { return }
+      homeError = error.localizedDescription
     }
   }
   func refreshList(_ client: APIClient) async {
@@ -69,7 +89,7 @@ final class TraktModel {
   }
   func action(_ client: APIClient, path: String, method: String = "POST", fields: [String: Any] = [:]) async {
     guard !saving else { return }
-    actionGeneration += 1; statusGeneration += 1
+    actionGeneration += 1; statusGeneration += 1; homeGeneration += 1
     let request = actionGeneration
     saving = true
     defer { if request == actionGeneration { saving = false } }

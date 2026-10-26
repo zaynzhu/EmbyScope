@@ -195,3 +195,95 @@ test('Trakt 本机 API 保留桌面密钥、写入来源校验与离线保护', 
   assert.equal((await fetch(`${url}/api/trakt/connect`, { headers, method: 'POST', body: '{}' })).status, 409)
   assert.equal((await fetch(`${url}/api/trakt/connect`, { headers: { ...headers, origin: 'https://example.com' }, method: 'POST', body: '{}' })).status, 403)
 })
+
+test('Trakt 首页按剧聚合但完整列表保留单集，旧快照也提供本机海报路径', async t => {
+  const { service, store } = fixture(t)
+  service.start(); await service.job
+  const recent = JSON.parse(store.db.prepare("SELECT data FROM trakt_cache WHERE kind='recent'").get().data)
+  recent.push({ ...recent.find(item => item.type === 'episode'), id: 'episode:4', episode: 3 })
+  store.db.prepare("UPDATE trakt_cache SET data=? WHERE kind='recent'").run(JSON.stringify(recent))
+  assert.equal(service.list(new URLSearchParams()).total, 3)
+  assert.equal(service.home().recent.length, 2)
+  assert.equal(service.home().recent.find(item => item.type === 'episode').posterPath, 'api/trakt/posters/shows/2')
+  assert.equal(service.home().playback[0].progress, 43.5)
+})
+
+test('Trakt 旧记录精确补图，同剧去重下载、缓存离线读取，CDN 不携带授权', async t => {
+  const bytes = Buffer.from('RIFF0000WEBPfixture')
+  const { service, calls } = fixture(t, (url, options) => {
+    if (url.pathname === '/shows/2') return Response.json({ ids: { trakt: 2 }, images: { poster: ['media.trakt.tv/images/shows/2/posters/a.jpg.webp'] } })
+    if (url.hostname === 'media.trakt.tv') {
+      assert.equal(options.headers.Authorization, undefined)
+      assert.equal(options.redirect, 'manual')
+      return new Response(bytes)
+    }
+    return defaultResponse(url.pathname)
+  })
+  service.start(); await service.job
+  const [a, b] = await Promise.all([service.posters.get('shows', '2'), service.posters.get('shows', '2')])
+  assert.deepEqual(a.buffer, bytes)
+  assert.equal(b.mime, 'image/webp')
+  assert.equal(calls.filter(call => call.url.hostname === 'media.trakt.tv').length, 1)
+  const count = calls.length
+  service.offline = () => true
+  assert.deepEqual((await service.posters.get('shows', '2')).buffer, bytes)
+  assert.equal(calls.length, count)
+  await assert.rejects(service.posters.get('movies', '999'), /没有这条/)
+})
+
+test('Trakt 图片拒绝未知域名、作品错配、重定向与伪图片，失败不入图片缓存', async t => {
+  let mode = 'host'
+  const { service, store, calls } = fixture(t, url => {
+    if (url.pathname === '/movies/1') return Response.json({ ids: { trakt: mode === 'id' ? 99 : 1 }, images: { poster: [mode === 'host' ? 'http://127.0.0.1/private' : 'media.trakt.tv/images/movies/1/poster.webp'] } })
+    if (url.hostname === 'media.trakt.tv') return mode === 'redirect' ? new Response(null, { status: 302, headers: { location: 'http://127.0.0.1' } }) : new Response('<html>invalid</html>')
+    return defaultResponse(url.pathname)
+  })
+  service.start(); await service.job
+  for (mode of ['host', 'id', 'redirect', 'format']) {
+    store.db.exec('DELETE FROM trakt_posters')
+    await assert.rejects(service.posters.get('movies', '1'))
+    assert.equal(store.db.prepare('SELECT count(*) AS count FROM trakt_posters WHERE data IS NOT NULL').get().count, 0)
+  }
+  assert.ok(calls.every(call => ['api.trakt.tv', 'media.trakt.tv'].includes(call.url.hostname)))
+})
+
+test('Trakt 断开授权会取消在途补图，不能回写旧账号缓存', async t => {
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const { service, store } = fixture(t, async url => {
+    if (url.pathname === '/movies/1') { await gate; return Response.json({ ids: { trakt: 1 }, images: { poster: [] } }) }
+    return defaultResponse(url.pathname)
+  })
+  service.start(); await service.job
+  const pending = service.posters.get('movies', '1')
+  const rejected = assert.rejects(pending)
+  service.disconnect()
+  release()
+  await rejected
+  assert.equal(store.db.prepare('SELECT count(*) AS count FROM trakt_posters').get().count, 0)
+})
+
+test('Trakt 海报支持加密 TMDB 读取令牌，按类型和 ID 获取，图片不携带凭据', async t => {
+  const token = 'fixture.private.tmdbtoken'
+  const { service, calls, store } = fixture(t, (url, options) => {
+    if (url.hostname === 'api.themoviedb.org') {
+      assert.equal(url.pathname, '/3/movie/11')
+      assert.equal(options.headers.Authorization, `Bearer ${token}`)
+      return Response.json({ id: 11, poster_path: '/fixture.jpg' })
+    }
+    if (url.hostname === 'image.tmdb.org') {
+      assert.equal(options.headers.Authorization, undefined)
+      assert.equal(url.pathname, '/t/p/w500/fixture.jpg')
+      return new Response(Buffer.from([255, 216, 255, 1]))
+    }
+    return defaultResponse(url.pathname)
+  })
+  service.start(); await service.job
+  service.posters.configure({ tmdbToken: token })
+  assert.equal(service.status().posterConfigured, true)
+  assert.doesNotMatch(JSON.stringify(service.home()), /private|tmdbtoken/)
+  assert.doesNotMatch(store.db.prepare("SELECT value FROM settings WHERE name='traktPosterCredentials'").get().value, /tmdbtoken/)
+  assert.equal((await service.posters.get('movies', '1')).mime, 'image/jpeg')
+  assert.equal(calls.filter(call => call.url.hostname === 'api.themoviedb.org').length, 1)
+  await assert.rejects(service.request('/movies/1', { body: {}, signal: new AbortController().signal }), /不允许修改/)
+})

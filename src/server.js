@@ -174,6 +174,14 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
         return send(response, 200, appSettings())
       }
       if (service.offline && method !== 'GET') throw new RemoteError('离线预览只读取本地缓存，请退出离线模式后修改配置或更新', 409)
+      if (path === '/api/trakt/poster-settings' && method === 'PUT') return send(response, 200, trakt.posters.configure(await readBody(request)))
+      if (path === '/api/trakt/home' && method === 'GET') return send(response, 200, trakt.home())
+      const traktPoster = path.match(/^\/api\/trakt\/posters\/(movies|shows)\/([1-9]\d{0,19})$/)
+      if (traktPoster && method === 'GET') {
+        const image = await trakt.posters.get(traktPoster[1], traktPoster[2])
+        response.writeHead(200, { 'Content-Type': image.mime, 'Cache-Control': 'no-store' })
+        return response.end(image.buffer)
+      }
       if (path === '/api/trakt/status' && method === 'GET') return send(response, 200, trakt.status())
       if (path === '/api/trakt/items' && method === 'GET') return send(response, 200, trakt.list(url.searchParams))
       if (path === '/api/trakt/settings' && method === 'PUT') return send(response, 200, trakt.configure(await readBody(request)))
