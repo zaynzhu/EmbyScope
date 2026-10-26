@@ -45,6 +45,12 @@ node scripts/import-pixelreel.mjs \
 
 工具使用只读事务读取源库，校验账号绑定检查点、稳定豆瓣 ID、已看状态和待处理批次；完整验证后在目标事务复制。目标已有豆瓣记录时拒绝重复迁移，后续同步只访问豆瓣及映览副本。源数据库和旧应用保持不变。
 
+## Trakt 观看记录
+
+从 0.1.18 起，顶部「Trakt 观看」可用独立设备码授权读取最近已看、全量已看电影／单集和续播百分比。使用自己注册的 Client ID，无需 Client Secret；详情见 [Trakt 使用说明](macOS使用说明.md#0118trakt-观看记录)。不用打开 Mac Infuse，Apple TV Infuse 须已将记录上传到同一 Trakt 账号。首版手动同步，不修改远端记录。
+
+配置备份包含加密授权及 `trakt_cache` 本地缓存，必须与 `secret.key` 一起保护。升级只新增独立缓存表和对应设置项，不改变已有 Emby、豆瓣或 S3 配置。断开只清除此来源的本机令牌和缓存；远端授权可在 Trakt 设置中管理。
+
 ## 配置与离线导入
 
 配置目录：`~/Library/Application Support/EmbyScope/`。应用文件与数据分开保存。导入使用 SQLite 一致性备份，包含已提交的 WAL；不会改原网页配置，不会复制登录会话，并暂停自动更新。

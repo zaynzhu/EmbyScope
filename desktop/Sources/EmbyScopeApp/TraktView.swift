@@ -52,7 +52,7 @@ struct TraktView: View {
               Button("复制授权码") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(device.userCode, forType: .string) }
               Button("打开 Trakt 授权页面") { if let url = URL(string: device.verificationUrl) { openURL(url) } }
             }
-            Text("有效至 \(formatted(device.expiresAt))。复用 PixelReel 的 Client ID 时，授权页会显示原应用名称。")
+            Text("有效至 \(formatted(device.expiresAt))。请核对授权页的应用名称，并使用与 Infuse 相同的 Trakt 账号。")
               .font(.caption).foregroundStyle(Theme.secondary)
           }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
         }
