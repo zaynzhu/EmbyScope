@@ -53,6 +53,22 @@ struct TraktSettingsView: View {
             Text("切换账号时，请先在浏览器登录与 Infuse 相同的 Trakt 账号，再授权映览。")
               .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
           }
+          VStack(alignment: .leading, spacing: 8) {
+            Toggle("自动同步观看记录", isOn: Binding(
+              get: { app.trakt.status?.automaticSync == true },
+              set: { enabled in
+                Task {
+                  if let client = app.client {
+                    await app.trakt.action(client, path: "api/trakt/automatic-sync", method: "PUT", fields: ["enabled": enabled])
+                  }
+                }
+              }
+            )).disabled(app.demo || app.offline || app.trakt.saving || app.trakt.status == nil)
+            Text("开启后，打开应用或回到首页时检查更新；距上次同步不足 30 分钟则跳过。失败或停止后也至少等待 30 分钟再自动尝试，仍可手动同步。")
+              .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("关闭会停止当前自动任务，不影响手动同步；与服务器自动更新分别控制。")
+              .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+          }
           Divider()
           DisclosureGroup(isExpanded: $showApplication) {
             VStack(alignment: .leading, spacing: 12) {

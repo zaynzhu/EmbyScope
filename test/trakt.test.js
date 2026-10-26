@@ -55,6 +55,139 @@ test('Trakt 独立读取最近已看、全量已看与进度，保留单集语�
   assert.doesNotMatch(store.db.prepare("SELECT value FROM settings WHERE name='traktCredentials'").get().value, /private-access/)
 })
 
+test('Trakt 自动同步默认关闭，开启仅保存配置，到期触发且与手动任务互斥', async t => {
+  const { service, calls } = fixture(t)
+  let now = Date.now()
+  service.now = () => now
+  assert.equal(service.status().automaticSync, false)
+  service.startIfDue()
+  assert.equal(service.job, null)
+  assert.throws(() => service.configureAutomaticSync({ enabled: 'true' }), /布尔值/)
+  service.configureAutomaticSync({ enabled: true })
+  assert.equal(calls.length, 0)
+  assert.equal(service.startIfDue().state, 'syncing')
+  const job = service.job
+  service.startIfDue()
+  assert.equal(service.job, job)
+  assert.throws(() => service.start(), /正在进行/)
+  await job
+  assert.equal(service.status().error, null)
+  assert.equal(calls.length, 4)
+  // 升级前的成功快照也应参与间隔判断。
+  service.write('traktLastAttemptAt', null)
+  now += 30 * 60 * 1000 - 1
+  service.startIfDue()
+  assert.equal(service.job, null)
+  now++
+  assert.equal(service.startIfDue().state, 'syncing')
+  await service.job
+  assert.equal(calls.length, 8)
+  assert.equal(service.status().updatedAt, new Date(now).toISOString())
+  service.start()
+  service.startIfDue()
+  await service.job
+  assert.equal(calls.length, 12)
+})
+
+test('Trakt 自动失败保留快照与错误，重启后仍遵守尝试间隔和开关', async t => {
+  let fail = false
+  let now = Date.now()
+  const { service, store, calls } = fixture(t, url => {
+    if (fail) { now += 10000; return Response.json({}, { status: 503 }) }
+    return defaultResponse(url.pathname)
+  })
+  service.now = () => now
+  service.start(); await service.job
+  const before = service.home()
+  service.configureAutomaticSync({ enabled: true })
+  now += 30 * 60 * 1000
+  fail = true
+  service.startIfDue(); await service.job
+  assert.match(service.status().error, /原缓存已保留/)
+  assert.deepEqual(service.home().recent, before.recent)
+  assert.equal(service.status().updatedAt, before.status.updatedAt)
+  assert.equal(calls.length, 5)
+  assert.equal(service.read('traktLastAttemptAt'), now)
+  const restarted = new TraktService(store, { now: () => now, fetchImpl: service.fetchImpl, limiter: service.limiter })
+  assert.equal(restarted.status().automaticSync, true)
+  restarted.startIfDue()
+  assert.equal(restarted.job, null)
+  assert.equal(calls.length, 5)
+  // 自动冷却不妨碍用户立即手动重试。
+  fail = false
+  restarted.start(); await restarted.job
+  assert.equal(restarted.status().error, null)
+  assert.equal(calls.length, 9)
+  await restarted.close()
+})
+
+test('Trakt 自动触发遵守离线、未授权、退出和持久化 Retry-After', async t => {
+  const { service, store, calls } = fixture(t, () => Response.json({}, { status: 429, headers: { 'retry-after': '7200' } }))
+  let now = Date.now()
+  service.now = () => now
+  service.configureAutomaticSync({ enabled: true })
+  service.offline = () => true
+  service.startIfDue()
+  service.offline = () => false
+  service.stopping = true
+  service.startIfDue()
+  service.stopping = false
+  const credentials = service.credentials()
+  service.write('traktCredentials', { clientId: CLIENT_ID }, true)
+  service.startIfDue()
+  assert.equal(service.job, null)
+  assert.equal(calls.length, 0)
+  service.write('traktCredentials', credentials, true)
+  service.startIfDue(); await service.job
+  assert.equal(calls.length, 1)
+  now += 31 * 60 * 1000
+  const restarted = new TraktService(store, { now: () => now, fetchImpl: service.fetchImpl, limiter: service.limiter })
+  restarted.startIfDue()
+  assert.equal(restarted.job, null)
+  assert.match(restarted.status().error, /限流/)
+  assert.equal(calls.length, 1)
+  await restarted.close()
+})
+
+test('Trakt 关闭开关取消自动任务后续分页，保留旧快照且不取消手动任务', async t => {
+  let blocked = false, release, reached
+  let pending
+  const { service, calls } = fixture(t, async url => {
+    if (blocked) {
+      blocked = false
+      reached()
+      await new Promise(resolve => { release = resolve })
+    }
+    return defaultResponse(url.pathname)
+  })
+  let now = Date.now()
+  service.now = () => now
+  service.start(); await service.job
+  const before = service.home()
+  now += 30 * 60 * 1000
+  service.configureAutomaticSync({ enabled: true })
+  blocked = true; pending = new Promise(resolve => { reached = resolve })
+  service.startIfDue()
+  await pending
+  service.configureAutomaticSync({ enabled: false })
+  assert.equal(service.controller.signal.aborted, true)
+  release(); await service.job
+  assert.equal(calls.length, 5)
+  assert.deepEqual(service.home().recent, before.recent)
+  assert.equal(service.status().updatedAt, before.status.updatedAt)
+  service.configureAutomaticSync({ enabled: true })
+  service.startIfDue()
+  assert.equal(service.job, null)
+  blocked = true; pending = new Promise(resolve => { reached = resolve })
+  service.start()
+  await pending
+  service.configureAutomaticSync({ enabled: false })
+  assert.equal(service.controller.signal.aborted, false)
+  release(); await service.job
+  assert.equal(calls.length, 9)
+  assert.equal(service.status().error, null)
+})
+
 test('Trakt 任一分页失败或分页不完整，保留整份旧快照', async t => {
   let fail = false
   const { service } = fixture(t, url => fail && url.pathname === '/sync/watched/shows' ? Response.json([], { status: 200 }) : defaultResponse(url.pathname))
@@ -194,6 +327,17 @@ test('Trakt 本机 API 保留桌面密钥、写入来源校验与离线保护', 
   assert.equal((await fetch(`${url}/api/trakt/status`, { headers })).status, 200)
   assert.equal((await fetch(`${url}/api/trakt/connect`, { headers, method: 'POST', body: '{}' })).status, 409)
   assert.equal((await fetch(`${url}/api/trakt/connect`, { headers: { ...headers, origin: 'https://example.com' }, method: 'POST', body: '{}' })).status, 403)
+  assert.equal((await fetch(`${url}/api/trakt/automatic-sync`, { method: 'PUT', body: '{"enabled":true}' })).status, 403)
+  assert.equal((await fetch(`${url}/api/trakt/sync-if-due`, { headers: { ...headers, origin: 'https://example.com' }, method: 'POST', body: '{}' })).status, 403)
+  assert.equal((await fetch(`${url}/api/trakt/automatic-sync`, { headers, method: 'PUT', body: '{"enabled":true}' })).status, 409)
+  assert.equal((await fetch(`${url}/api/trakt/sync-if-due`, { headers, method: 'POST', body: '{}' })).status, 409)
+  app.service.offline = false
+  const setting = await fetch(`${url}/api/trakt/automatic-sync`, { headers, method: 'PUT', body: '{"enabled":true}' })
+  assert.equal(setting.status, 200)
+  assert.equal((await setting.json()).automaticSync, true)
+  const skipped = await fetch(`${url}/api/trakt/sync-if-due`, { headers, method: 'POST', body: '{}' })
+  assert.equal(skipped.status, 202)
+  assert.equal((await skipped.json()).state, 'idle')
 })
 
 test('Trakt 首页按剧聚合但完整列表保留单集，旧快照也提供本机海报路径', async t => {

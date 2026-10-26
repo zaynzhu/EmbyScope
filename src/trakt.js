@@ -7,6 +7,7 @@ const AUTH_ORIGIN = 'https://auth.trakt.tv'
 const KINDS = ['recent', 'watched', 'playback']
 const MAX_PAGES = 1000
 const MAX_ITEMS = 100000
+const AUTOMATIC_SYNC_INTERVAL = 30 * 60 * 1000
 const text = (value, max = 500) => typeof value === 'string' && value.length <= max ? value : null
 const date = value => text(value, 40) && Number.isFinite(Date.parse(value)) ? value : null
 const id = value => Number.isSafeInteger(value) && value > 0 ? String(value) : typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value) ? value : null
@@ -44,7 +45,8 @@ export class TraktService {
     this.device = null
     this.state = 'idle'
     this.stopping = false
-    this.retryAt = 0
+    this.retryAt = this.read('traktRetryAt') || 0
+    this.automaticJob = false
     this.store.db.exec('CREATE TABLE IF NOT EXISTS trakt_cache (kind TEXT PRIMARY KEY, data TEXT NOT NULL, updatedAt TEXT NOT NULL)')
     this.posters = new TraktPosters(this)
   }
@@ -61,6 +63,7 @@ export class TraktService {
     const credentials = this.credentials()
     const caches = this.store.db.prepare('SELECT kind, updatedAt, json_array_length(data) AS count FROM trakt_cache').all()
     return {
+      automaticSync: this.read('traktAutomaticSync') === true,
       posterConfigured: !!this.read('traktPosterCredentials', true)?.tmdbToken,
       configured: !!credentials.clientId, connected: !!credentials.accessToken,
       account: credentials.account || null, state: this.state, offline: this.offline(),
@@ -104,6 +107,21 @@ export class TraktService {
     this.write('traktCredentials', { clientId: clientId.trim() }, true)
     return this.status()
   }
+  configureAutomaticSync({ enabled }) {
+    if (typeof enabled !== 'boolean') throw new RemoteError('自动同步开关必须是布尔值', 400)
+    this.write('traktAutomaticSync', enabled)
+    if (!enabled && this.automaticJob) this.cancel()
+    return this.status()
+  }
+  startIfDue() {
+    const status = this.status()
+    if (!status.automaticSync || !status.connected || status.offline || this.stopping || this.job) return status
+    const latest = Math.max(Date.parse(status.updatedAt) || 0, this.read('traktLastAttemptAt') || 0)
+    if (this.now() < this.retryAt || this.now() - latest < AUTOMATIC_SYNC_INTERVAL) return status
+    const next = this.start()
+    this.automaticJob = true
+    return next
+  }
   disconnect() {
     this.cancel()
     this.posters.clear()
@@ -112,11 +130,13 @@ export class TraktService {
     try {
       this.write('traktCredentials', { clientId }, true)
       this.write('traktError', null)
+      this.write('traktLastAttemptAt', null)
       this.store.db.exec('DELETE FROM trakt_cache; COMMIT')
     } catch (error) { this.store.db.exec('ROLLBACK'); throw error }
     return this.status()
   }
   cancel() {
+    if (this.state === 'syncing') this.write('traktLastAttemptAt', this.now())
     this.revision++
     this.controller?.abort()
     this.device = null
@@ -148,6 +168,7 @@ export class TraktService {
           const raw = response.headers.get('retry-after')
           const delay = raw && /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - this.now()
           this.retryAt = this.now() + Math.max(60000, Number.isFinite(delay) ? delay : 0)
+          this.write('traktRetryAt', this.retryAt)
         }
         const html = (response.headers.get('content-type') || '').includes('text/html')
         await response.body?.cancel()
@@ -183,8 +204,11 @@ export class TraktService {
     const job = Promise.resolve().then(() => work(revision, signal)).catch(error => {
       if (revision === this.revision && !signal.aborted) this.write('traktError', error instanceof RemoteError ? error.message : 'Trakt 连接失败或超时，原缓存已保留')
     }).finally(() => {
-      if (revision === this.revision) { this.state = 'idle'; this.device = null }
-      if (this.job === job) this.job = null
+      if (revision === this.revision) {
+        if (this.state === 'syncing') this.write('traktLastAttemptAt', this.now())
+        this.state = 'idle'; this.device = null
+      }
+      if (this.job === job) { this.job = null; this.automaticJob = false }
     })
     this.job = job
     return this.status()
@@ -292,6 +316,9 @@ export class TraktService {
     throw invalid()
   }
   async sync(revision, signal) {
+    this.check(revision, signal)
+    // 手动与自动共用尝试时间，失败、取消及重启后也不会立即自动重试。
+    this.write('traktLastAttemptAt', this.now())
     const credentials = await this.authorized(revision, signal)
     try {
       const history = await this.pages('/sync/history', credentials, revision, signal, true)

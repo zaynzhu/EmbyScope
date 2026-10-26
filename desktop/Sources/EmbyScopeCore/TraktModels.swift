@@ -12,6 +12,7 @@ public struct TraktStatus: Decodable {
     public let playback: Int
   }
   public let posterConfigured: Bool?
+  public let automaticSync: Bool?
   public let configured: Bool
   public let connected: Bool
   public let account: String?

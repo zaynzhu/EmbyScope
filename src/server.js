@@ -185,6 +185,8 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
       if (path === '/api/trakt/status' && method === 'GET') return send(response, 200, trakt.status())
       if (path === '/api/trakt/items' && method === 'GET') return send(response, 200, trakt.list(url.searchParams))
       if (path === '/api/trakt/settings' && method === 'PUT') return send(response, 200, trakt.configure(await readBody(request)))
+      if (path === '/api/trakt/automatic-sync' && method === 'PUT') return send(response, 200, trakt.configureAutomaticSync(await readBody(request)))
+      if (path === '/api/trakt/sync-if-due' && method === 'POST') return send(response, 202, trakt.startIfDue())
       if (path === '/api/trakt/connect' && method === 'POST') return send(response, 202, trakt.connect())
       if (path === '/api/trakt/sync' && method === 'POST') return send(response, 202, trakt.start())
       if (path === '/api/trakt/cancel' && method === 'POST') return send(response, 200, trakt.cancel())

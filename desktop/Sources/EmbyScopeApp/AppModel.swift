@@ -155,6 +155,10 @@ final class AppModel {
       if page == .library || page == .duplicates { await loadLibrary() }
     } catch { if current == generation { report(error) } }
   }
+  func checkTraktAutomaticSync() async {
+    guard authenticated, !demo, !offline, !Task.isCancelled, let client else { return }
+    await trakt.action(client, path: "api/trakt/sync-if-due")
+  }
   func loadServerStatus() async {
     guard let client, authenticated, !Task.isCancelled else { return }
     serverStatusGeneration += 1

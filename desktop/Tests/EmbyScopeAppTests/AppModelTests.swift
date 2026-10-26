@@ -71,6 +71,47 @@ struct AppModelTests {
   private func traktList(_ title: String, page: Int = 1) -> [String: Any] {
     ["items": [["id": "movie:1", "title": title, "type": "movie"]], "page": page, "pages": 3, "total": 60, "available": true]
   }
+  @Test func traktAutomaticSyncStartsPollingAndCompletedSnapshotRefreshesHomeAndList() async {
+    let (app, requests) = fixture()
+    let previousRevision = app.trakt.pollRevision
+    let check = Task { await app.checkTraktAutomaticSync() }
+    let trigger = await requests.next()
+    #expect(trigger.request.url?.path == "/api/trakt/sync-if-due")
+    #expect(trigger.request.httpMethod == "POST")
+    var running = traktStatus()
+    running["automaticSync"] = true; running["state"] = "syncing"
+    trigger.respond(running)
+    await check.value
+    #expect(app.trakt.status?.busy == true)
+    #expect(app.trakt.status?.automaticSync == true)
+    #expect(app.trakt.pollRevision == previousRevision + 1)
+    let previousListRevision = app.trakt.listRevision
+    let refresh = Task { await app.trakt.loadHome(app.client!) }
+    let snapshot = await requests.next()
+    snapshot.respond(["status": traktStatus(updatedAt: "2026-10-26T12:00:00Z"), "recent": [["id": "movie:2", "title": "自动同步的新记录", "type": "movie", "posterPath": "api/trakt/posters/movies/2"]], "playback": []])
+    await refresh.value
+    #expect(app.trakt.status?.busy == false)
+    #expect(app.trakt.home?.recent.first?.title == "自动同步的新记录")
+    #expect(app.trakt.home?.recent.first?.posterPath == "api/trakt/posters/movies/2")
+    #expect(app.trakt.listRevision == previousListRevision + 1)
+  }
+  @Test func traktAutomaticSyncSkipsLockedAndOfflineAndRejectsClearedSessionResponse() async {
+    let (app, requests) = fixture()
+    app.offline = true
+    await app.checkTraktAutomaticSync()
+    app.offline = false; app.authenticated = false
+    await app.checkTraktAutomaticSync()
+    #expect(app.trakt.pollRevision == 0)
+    app.authenticated = true
+    let check = Task { await app.checkTraktAutomaticSync() }
+    let trigger = await requests.next()
+    app.trakt.clear()
+    let revision = app.trakt.pollRevision
+    trigger.respond(traktStatus())
+    await check.value
+    #expect(app.trakt.status == nil)
+    #expect(app.trakt.pollRevision == revision)
+  }
   @Test func traktHomeRejectsOldResponseAfterClearAndKeepsSnapshotOnFailure() async {
     let (app, requests) = fixture()
     let snapshot: [String: Any] = ["status": traktStatus(), "recent": [["id": "movie:1", "title": "首页电影", "type": "movie", "posterPath": "api/trakt/posters/movies/1"]], "playback": []]

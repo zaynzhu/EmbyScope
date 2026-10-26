@@ -110,6 +110,10 @@ struct HomeView: View {
       }
       .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in applicationActive = true }
       .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in applicationActive = false }
+      .task(id: visible) {
+        guard visible else { return }
+        await app.checkTraktAutomaticSync()
+      }
       .task(id: "\(visible)-\(app.trakt.pollRevision)") {
         guard visible, let client = app.client else { return }
         repeat {
