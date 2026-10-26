@@ -3,12 +3,14 @@ import EmbyScopeCore
 
 struct LibraryView: View {
   @Environment(AppModel.self) private var app
+  @State private var showEpisodeAudit = false
   var body: some View {
     @Bindable var app = app
     VStack(alignment: .leading, spacing: 20) {
       HStack {
         SectionTitle(title: app.page == .duplicates ? "重复与刮削排查" : "你的片库", subtitle: app.page == .duplicates ? "分开核对资源重复线索与元数据疑点。不同季不直接算重复，证据不足保留待确认。" : "电影与剧集 · 每张卡片保留来源")
         Spacer()
+        Button("缺集检查", systemImage: "list.number") { showEpisodeAudit = true }
         if let total = app.library?.total { Text("\(total) 个\(app.page == .duplicates ? "关联组" : "作品分组")").font(.caption.monospacedDigit()).foregroundStyle(Theme.secondary) }
       }
       InventoryPanel()
@@ -49,6 +51,7 @@ struct LibraryView: View {
         Button("下一页") { app.libraryPage += 1; Task { await app.loadLibrary() } }.disabled(app.libraryPage >= (app.library?.pages ?? 1))
       }
     }.padding(28).task(id: app.page) { await app.loadLibrary() }
+      .sheet(isPresented: $showEpisodeAudit) { EpisodeAuditView() }
   }
 }
 

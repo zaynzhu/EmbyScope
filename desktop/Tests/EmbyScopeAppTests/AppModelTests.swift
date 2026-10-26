@@ -71,6 +71,84 @@ struct AppModelTests {
   private func traktList(_ title: String, page: Int = 1) -> [String: Any] {
     ["items": [["id": "movie:1", "title": title, "type": "movie"]], "page": page, "pages": 3, "total": 60, "available": true]
   }
+  private func episodeAuditSnapshot(_ title: String, page: Int = 1) -> [String: Any] {
+    ["items": [["key": "a:series", "title": title, "conflict": false, "sources": [], "missingCount": 1, "state": "gaps"]],
+     "total": 50, "page": page, "pages": 3, "counts": ["gaps": 1, "unknown": 2, "continuous": 0],
+     "running": false, "offline": false, "knownServers": 2, "totalServers": 2]
+  }
+  @Test func episodeAuditScopeChangesAndClearedSessionsRejectOldResults() async {
+    let (app, requests) = fixture()
+    let model = EpisodeAuditModel()
+    let old = Task { await model.load(app.client!, server: "a") }
+    let oldRequest = await requests.next()
+    let next = Task { await model.load(app.client!, server: "b") }
+    let nextRequest = await requests.next()
+    #expect(nextRequest.request.url?.path == "/api/episode-audit")
+    #expect(nextRequest.request.httpMethod == "GET")
+    #expect(nextRequest.request.url?.query?.contains("server=b") == true)
+    nextRequest.respond(episodeAuditSnapshot("新来源"))
+    await next.value
+    oldRequest.respond(episodeAuditSnapshot("旧来源"))
+    await old.value
+    #expect(model.result?.items.first?.title == "新来源")
+    let pending = Task { await model.load(app.client!, server: "b") }
+    let pendingRequest = await requests.next()
+    model.clear()
+    pendingRequest.respond(episodeAuditSnapshot("已清除的会话"))
+    await pending.value
+    #expect(model.result == nil)
+    #expect(!model.loading)
+  }
+  @Test func episodeAuditRefreshKeepsPageAndFailureKeepsSnapshotButSearchResets() async {
+    let (app, requests) = fixture()
+    let model = EpisodeAuditModel()
+    let first = Task { await model.load(app.client!, server: "all") }
+    let firstRequest = await requests.next()
+    firstRequest.respond(episodeAuditSnapshot("初次检查"))
+    await first.value
+    model.page = 2
+    let second = Task { await model.load(app.client!, server: "all") }
+    let secondRequest = await requests.next()
+    #expect(secondRequest.request.url?.query?.contains("page=2") == true)
+    secondRequest.respond(episodeAuditSnapshot("第二页", page: 2))
+    await second.value
+    let failed = Task { await model.load(app.client!, server: "all") }
+    let failedRequest = await requests.next()
+    failedRequest.respond(["error": "模拟失败"], status: 500)
+    await failed.value
+    #expect(model.result?.items.first?.title == "第二页")
+    #expect(model.error == "模拟失败")
+    model.query = "另一部剧"
+    let searched = Task { await model.load(app.client!, server: "all") }
+    let searchedRequest = await requests.next()
+    #expect(model.result == nil)
+    #expect(searchedRequest.request.url?.query?.contains("page=1") == true)
+    searchedRequest.respond(episodeAuditSnapshot("筛选结果"))
+    await searched.value
+    #expect(model.error == nil)
+  }
+  @Test func episodeAuditExplicitReadTriggersPollingAndPreservesActionErrors() async throws {
+    let (app, requests) = fixture()
+    let model = EpisodeAuditModel()
+    let source = try JSONDecoder().decode(EpisodeAuditSource.self, from: JSONSerialization.data(withJSONObject: [
+      "serverId": "a", "seriesId": "series", "title": "模拟剧", "serverName": "来源 A",
+      "stale": false, "running": false, "excluded": 0, "eligible": false, "reasons": ["待确认"], "seasons": []
+    ]))
+    let start = Task { await model.refresh(app.client!, source: source) }
+    let startRequest = await requests.next()
+    #expect(startRequest.request.url?.path == "/api/episode-audit/refresh")
+    #expect(startRequest.request.httpMethod == "POST")
+    startRequest.respond(["ok": true], status: 202)
+    await start.value
+    #expect(model.pollRevision == 1)
+    #expect(!model.saving)
+    let failed = Task { await model.refresh(app.client!, source: source) }
+    let failedRequest = await requests.next()
+    failedRequest.respond(["error": "请等待 1 分钟"], status: 409)
+    await failed.value
+    #expect(model.actionError == "请等待 1 分钟")
+    #expect(model.pollRevision == 1)
+  }
   @Test func traktAutomaticSyncStartsPollingAndCompletedSnapshotRefreshesHomeAndList() async {
     let (app, requests) = fixture()
     let previousRevision = app.trakt.pollRevision

@@ -316,33 +316,44 @@ export class Service {
     const item = this.findItem(serverId, itemId)
     await this.readResources(serverId, itemId)
     const seriesId = item.type === 'Series' ? item.id : item.seriesId
-    if (seriesId && this.seasonMode(serverId)) {
-      const row = this.store.server(serverId)
-      const kind = `episodes:${seriesId}`
-      const cache = this.store.cache(serverId, kind)
-      const attempt = this.store.cache(serverId, `episodeAttempt:${seriesId}`)?.data?.at || 0
-      if ((!cache?.data || Date.now() - Date.parse(cache.updatedAt) > this.cacheMinutes * 60000) && Date.now() - attempt > 60000) {
-        const key = `${serverId}:${row.revision}:${seriesId}`
-        if (!this.detailJobs.has(key)) {
-          const job = (async () => {
-            try {
-              const items = await this.client.episodes(row, this.store.decrypt(row.secret), seriesId)
-              if (this.current(row)) this.store.saveCache(serverId, kind, items.map(child => normalizeItem(child, serverId)))
-            } catch (error) {
-              const safe = error instanceof RemoteError ? error : new RemoteError('单集接口响应不完整')
-              if (safe.status === 401) this.invalidateAuth(row, safe)
-              else this.failCache(row, kind, safe)
-            } finally {
-              if (this.current(row)) this.store.saveCache(serverId, `episodeAttempt:${seriesId}`, { at: Date.now() })
-            }
-          })().finally(() => this.detailJobs.delete(key))
-          this.detailJobs.set(key, job)
-        }
-        await this.detailJobs.get(key)
-        if (!this.current(row)) throw new RemoteError('连接已变更，请重新打开详情', 409)
-      }
-    }
+    if (seriesId && this.seasonMode(serverId)) await this.readEpisodes(serverId, seriesId)
     return this.detail(serverId, itemId, params)
+  }
+  async readEpisodes(serverId, seriesId, force = false) {
+    if (this.offline || this.stopping) throw new RemoteError('离线模式或应用退出中，未读取单集', 409)
+    const row = this.store.server(serverId)
+    if (!row) throw new RemoteError('连接不存在', 404)
+    const kind = `episodes:${seriesId}`
+    const cache = this.store.cache(serverId, kind)
+    const attempt = this.store.cache(serverId, `episodeAttempt:${seriesId}`)?.data?.at || 0
+    const key = `${serverId}:${row.revision}:${seriesId}`
+    if (this.detailJobs.has(key)) {
+      await this.detailJobs.get(key)
+      if (!this.current(row)) throw new RemoteError('连接已变更，请重新打开详情', 409)
+      return
+    }
+    if (Date.now() - attempt <= 60000) {
+      if (force) throw new RemoteError('本剧刚刚读取过，请等待 1 分钟后重试', 409)
+      return
+    }
+    if (!force && cache?.data && Date.now() - Date.parse(cache.updatedAt) <= this.cacheMinutes * 60000) return
+    const job = (async () => {
+      try {
+        const secret = this.store.decrypt(row.secret)
+        if (!secret.token || !secret.userId) throw new RemoteError('登录失效，请刷新连接', 401)
+        const items = await this.client.episodes({ ...row, canRequest: () => !this.stopping && !this.offline && this.current(row) }, secret, seriesId)
+        if (this.current(row) && !this.stopping && !this.offline) this.store.saveCache(serverId, kind, items.map(child => normalizeItem(child, serverId)))
+      } catch (error) {
+        const safe = error instanceof RemoteError ? error : new RemoteError('单集接口响应不完整')
+        if (safe.status === 401) this.invalidateAuth(row, safe)
+        else this.failCache(row, kind, safe)
+      } finally {
+        if (this.current(row)) this.store.saveCache(serverId, `episodeAttempt:${seriesId}`, { at: Date.now() })
+      }
+    })().finally(() => this.detailJobs.delete(key))
+    this.detailJobs.set(key, job)
+    await job
+    if (!this.current(row)) throw new RemoteError('连接已变更，请重新打开详情', 409)
   }
   async readResources(serverId, itemId) {
     this.findItem(serverId, itemId)

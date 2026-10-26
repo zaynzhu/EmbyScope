@@ -60,6 +60,11 @@ export function normalizeItem(item, serverId) {
     providerIds, createdAt: validDate(item.DateCreated), premiereDate: validDate(item.PremiereDate),
     seriesId: string(item.SeriesId), seriesName: string(item.SeriesName), seasonId: string(item.SeasonId),
     season: number(item.ParentIndexNumber), episode: number(item.IndexNumber),
+    ...(item.Type === 'Episode' ? {
+      episodeNumberingVersion: 1,
+      episodeEnd: item.IndexNumberEnd == null ? null : number(item.IndexNumberEnd) ?? -1,
+      virtual: item.IsVirtualItem === true || item.IsMissing === true || item.LocationType === 'Virtual'
+    } : {}),
     imageTag: string(item.ImageTags?.Primary), runtimeTicks: number(item.RunTimeTicks),
     positionTicks: number(item.UserData?.PlaybackPositionTicks), lastPlayed: validDate(item.UserData?.LastPlayedDate)
   }

@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { Store } from './store.js'
 import { DoubanService } from './douban.js'
 import { TraktService } from './trakt.js'
+import { episodeAudit } from './episode-audit.js'
 import { Service } from './service.js'
 import { EmbyClient, RemoteError } from './emby.js'
 import { homeSnapshot } from './home.js'
@@ -237,6 +238,17 @@ export function createApp({ dataDir = process.env.DATA_DIR || './data', client, 
       if (path === '/api/overview' && method === 'GET') return send(response, 200, service.overview(url.searchParams.get('server')))
       if (path === '/api/home' && method === 'GET') return send(response, 200, { ...homeSnapshot(store, service.selected(url.searchParams.get('server'))), playback: playbackSnapshot(store, service.selected(url.searchParams.get('server')), service.offline) })
       if (path === '/api/library' && method === 'GET') return send(response, 200, service.library(url.searchParams))
+      if (path === '/api/episode-audit' && method === 'GET') return send(response, 200, episodeAudit(service, url.searchParams))
+      if (path === '/api/episode-audit/refresh' && method === 'POST') {
+        if (service.stopping) throw new RemoteError('应用正在退出，未读取单集', 409)
+        const { serverId, seriesId } = await readBody(request)
+        if (typeof serverId !== 'string' || typeof seriesId !== 'string' || seriesId.length > 200) throw new RemoteError('请选择有效剧集', 400)
+        if (service.findItem(serverId, seriesId).type !== 'Series') throw new RemoteError('请选择电视剧条目', 400)
+        const attempt = store.cache(serverId, `episodeAttempt:${seriesId}`)?.data?.at || 0
+        if (Date.now() - attempt <= 60000) throw new RemoteError('本剧刚刚读取过，请等待 1 分钟后重试', 409)
+        service.readEpisodes(serverId, seriesId, true).catch(() => {})
+        return send(response, 202, { ok: true })
+      }
       const item = path.match(/^\/api\/items\/([a-f0-9-]+)\/([^/]+)(\/(?:poster|resources))?$/)
       if (item && method === 'GET') {
         let itemId
