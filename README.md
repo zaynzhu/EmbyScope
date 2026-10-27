@@ -1,68 +1,159 @@
+<div align="center">
+
+<img src="public/favicon.svg" alt="映览图标" width="88">
+
 # 映览 · EmbyScope
 
-个人自用的多 Emby 信息看板。一个本地管理员，一台 Emby 对应一个普通账号。概览、片库和服务器设置都在同一个应用内；后端读取 Emby，SQLite 保存配置与缓存。
+**把分散的片库、观看记录和资源线索，收进一个自己的媒体看板。**
 
-界面参考 TTD 的媒体概览信息顺序：统计卡片 → 媒体库 → 最近入库 → 继续观看，并增加服务器切换、来源标注、跨服去重和缓存状态。没有读取或复制 TTD 凭据，没有改动 TTD 配置。
+[使用说明](docs/macOS使用说明.md) · [安装与备份](docs/macOS安装与备份.md) · [NAS 部署](docs/部署说明.md) · [验收记录](docs/macOS验收记录.md)
 
-## macOS 原生预览版
+</div>
 
-SwiftUI 原生界面以「此刻」首页展示最近观看、继续观看和独立开启的前台实时查看，原概览在第二页；另有片库、豆瓣已看、Trakt 观看、重复与刮削排查、资源路径及服务器设置。片库状态栏展示当前范围、缓存时间和问题入口，可查看服务器同步记录。复用 Node 业务内核和 SQLite，应用自带运行时，网页版继续保留。Mac 默认直接进入首页，可在设置中开启启动密码。
+<div align="center">
 
-每台服务器可关联一个反代地址，共用身份和片库，不重复入库。普通 Emby 读取当前账号会话；极影视可选择明确标注的兼容活动检测，不冒充精确在播状态。资源排查区分不同季、重复线索与元数据疑点，路径对照不等于确认物理文件重复。TTD 日志自动接入尚未实现。
+**中文** | [English](README_EN.md)
 
-在 Mac 上运行 `scripts/build-macos-app.sh` 构建，再用 `open dist/EmbyScope.app --args --demo` 打开隔离演示。普通双击启动使用独立配置目录，不自动导入网页版数据。也可运行 `scripts/build-macos-dmg.sh` 生成 DMG。已验证本机 arm64 安装、真实缓存导入及限定范围接口读取；采用临时签名，尚未完成 Apple 公证。
+</div>
 
-参见 [桌面版使用说明](docs/macOS使用说明.md) 、[安装与备份](docs/macOS安装与备份.md) 和 [桌面版验收记录](docs/macOS验收记录.md)。
+<div align="center">
 
-![macOS 原生首页，虚构演示数据](docs/images/macos-home.png)
+![macOS](https://img.shields.io/badge/macOS-14%2B-161616?style=for-the-badge&logo=apple)
+![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-F39B39?style=for-the-badge&logo=swift&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22.22.2-43853D?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![SQLite](https://img.shields.io/badge/Storage-SQLite-39758C?style=for-the-badge&logo=sqlite)
 
-## 功能与范围
+</div>
 
-- 网页版首次打开设置管理员密码；Mac 版启动密码可选、默认关闭。无注册、多用户或权限管理。
-- 添加、编辑、删除多个 Emby 连接，通过 `Users/AuthenticateByName` 登录，不要求 API Key 或远端插件。
-- 支持要求 `X-Emby-Authorization` 设备身份头的极影视 Emby 兼容接口；已验证登录、片库、媒体库和海报读取。兼容层未完整实现的筛选或数据接口会明确提示限制。
-- 顶部切换单服 / 全部服务器；统计当前账号可见的媒体库、电影、电视剧、单集。
-- 区分作品条目数（电影 + 电视剧的各服合计）与去重作品数；单集不计入作品去重。
-- 网页概览提供重复组数、额外条目数和「重复与刮削排查」入口；详情可对照同服及跨服条目的来源、编号与资源位置。区分作品归组、季范围及排查线索，不判断文件是否可删除。
-- 片库搜索、电影 / 电视剧筛选、服务器筛选、分页、海报与详情；电视剧详情支持季筛选和每页 50 集。
-- 最近入库及当前账号继续观看分别读取独立接口，每服取最多 18 条，汇总最多展示 24 条；排序依据服务端提供的时间，时间缺失时不猜测。
-- 展示来源、更新时间、同步中 / 在线 / 部分可用 / 离线 / 权限异常状态。
-- Mac 的豆瓣已看独立保存个人评分、短评和同步进度；设置中支持全量／增量同步，成功后自动接续本次范围的缺图补全。海报保存本地，可配置 S3 镜像，无需运行 PixelReel 或 WhatShot。详情见[豆瓣已看说明](docs/macOS安装与备份.md#豆瓣已看)。
-- Mac 片库与重复排查页提供「缺集检查」：逐季展示缓存编号缺口、各来源收录与互补线索；缺少完整单集快照时待确认，可按需读取单剧，不自动扫库。范围内连续不代表全剧齐全。
-- Mac 首页直接展示 Trakt 最近观看与续播海报，同剧保留最新一集，并可切换服务器记录；「Trakt 观看」用海报网格展示完整记录。海报按作品 ID 从 Trakt／已配置的 TMDB 获取并缓存本机。
-- 「Trakt 观看」使用独立设备码授权，手动同步最近已看、全量已看电影／单集和续播百分比；可读取 Apple TV Infuse 已上传的记录，无需启动 Mac Infuse。与 Emby、豆瓣分别展示，不写回远端。「账号与配置」集中管理账号授权、应用与海报来源，详情见 [Trakt 使用说明](docs/macOS使用说明.md#0120账号配置与导航)。
-- 可独立开启 Trakt 自动同步（默认关闭）：启动或回到前台首页时，间隔至少 30 分钟才更新；成功自动刷新，失败保留缓存并冷却，关闭可停止自动任务。详见 [自动同步说明](docs/macOS使用说明.md#0121trakt-自动同步)。
-- Emby 播放次数、总观看时长、排行、趋势没有接入可信历史，统一标记不可用；Emby 进度使用账号的 `PlaybackPositionTicks / RunTimeTicks`，Trakt 进度使用其上报的百分比，两者不合并。
-- 不播放、代理或下载视频，不触发远端刮削、不写 NFO，不修改 Emby 媒体或用户数据；Emby 请求限于登录 POST 和只读 GET。豆瓣海报可下载到本机，并在配置 S3 后上传至指定桶。
+映览是个人自用的多 Emby 信息看板：一个本地管理员，每台 Emby 使用一个普通账号。Mac 版以 SwiftUI 提供原生界面，Node.js 业务内核与 SQLite 保存配置、缓存和观看快照，同时保留可独立部署的网页版。
 
-## 本地启动
+> [!NOTE]
+> 映览用于查看和核对媒体信息，不播放、代理或下载视频，也不修改 Emby 媒体或观看数据。Mac 版功能更完整；网页版目前覆盖基础片库与资源排查，两者不会自动共享本地配置。
 
-使用 fnm 管理的 Node.js **22.22.2**，不需要安装 npm 依赖：
+![Mac 原生首页，使用虚构演示数据](docs/images/macos-home.png)
 
-```sh
+---
+
+## ✨ 核心能力
+
+- **多服片库，一处查看**：切换单服或汇总视图，搜索电影与剧集，查看媒体库、最近入库、继续观看和来源。
+- **观看记录，各有依据**：Mac 首页汇集 Trakt 最近观看与续播，可切换服务器记录；豆瓣已看独立保留个人评分和短评。
+- **重复与刮削排查**：根据作品编号关联来源，区分重复线索、季范围和元数据疑点，按需读取资源位置。
+- **缺集按需核对**：Mac 逐季检查已有编号范围内的缺口，识别合并集，展示其他来源的对应集数；证据不足显示待确认。
+- **更新节奏可控**：Emby 轻量更新与全库校准分开，Trakt 自动同步独立开启，豆瓣同步成功后接续本次范围的海报补全。
+- **缓存与凭据留在本机**：连接凭据加密保存，海报和完整快照可复用；豆瓣海报可选 S3 镜像，备份覆盖配置与缓存。
+- **普通账号与兼容接口**：无需 Emby API Key 或远端插件，支持已验证的极影视兼容接口；权限或接口不足时明确显示限制。
+
+### 选择使用方式
+
+| 能力 | Mac 原生版 | 网页版 / NAS 部署 |
+| :--- | :--- | :--- |
+| 多服概览、片库、搜索与详情 | 支持 | 支持 |
+| 重复线索、元数据排查、资源位置 | 支持 | 支持 |
+| 豆瓣已看与海报补全 | 支持 | 暂无对应界面 |
+| Trakt 观看与续播 | 支持 | 暂无对应界面 |
+| 缺集检查与同步记录窗口 | 支持 | 暂无对应界面 |
+| 启动登录 | 密码可选，默认关闭 | 必须设置管理员密码 |
+| 运行方式 | 内置 Node.js，应用启动时运行 | 单独运行 Node.js 服务或容器 |
+
+Mac 当前构建版本为 **0.1.22 / build 23**，要求 **macOS 14 或以上**；已在本机 Apple Silicon 验证。没有 iOS / Android 原生安装包，远端读取仍取决于到服务器的网络连通性。
+
+---
+
+## 🚀 快速体验
+
+先用模拟数据体验网页版，无需填写真实 Emby 账号。以下命令要求已安装 Git 和 fnm，并在终端配置好 fnm；项目无需安装 npm 依赖。
+
+```bash
+git clone https://github.com/zaynzhu/EmbyScope.git
+cd EmbyScope
+fnm install
+fnm use
+npm run demo
+```
+
+打开 `http://127.0.0.1:3900`，设置临时管理员密码。演示包含两台模拟 Emby，其中一台的继续观看接口会返回 403，用于展示部分不可用状态。正常按 `Ctrl+C` 退出后清理演示数据，不写入正式配置目录。
+
+已构建 Mac App 时，也可以打开隔离演示：
+
+```bash
+open dist/EmbyScope.app --args --demo
+```
+
+---
+
+## 📦 安装与运行
+
+### Mac 原生版
+
+已有与本机架构匹配的 DMG 时，将 `EmbyScope.app` 拖入“应用程序”即可；运行包内置 Node.js，无需另装 Docker 或数据库。安装前阅读[安装、升级与备份说明](docs/macOS安装与备份.md)。
+
+从源码构建需要 macOS、Swift 工具链、fnm 和 ripgrep；在仓库根目录执行：
+
+```bash
+fnm install
+fnm use
+scripts/build-macos-dmg.sh
+```
+
+脚本按本机架构生成 `dist/EmbyScope.app`、DMG 和 SHA-256 校验文件。构建采用本机临时签名，未经 Apple 公证；本机验证不等于已验证所有 Mac 的安装体验。开发时只需要 App，可运行 `scripts/build-macos-app.sh`。
+
+### 本地网页版
+
+在仓库根目录使用项目固定的 Node.js **22.22.2**：
+
+```bash
 fnm use
 npm start
 ```
 
-打开 `http://localhost:3000`，先设置至少 12 个字符的本地管理员密码，再在服务器设置填写 Emby 地址、用户名和密码。若地址有反向代理子路径，例如 `https://media.example.com/emby`，完整填写该路径；不要填 `/web/index.html`、API 路径或查询令牌。
+打开 `http://localhost:3000`，首次设置至少 12 个字符的管理员密码，然后添加 Emby 连接。默认配置位于 `data/`；通过 `DATA_DIR`、`PORT`、`HOST` 调整路径和监听地址。首次初始化放在可信网络中，远程访问使用 HTTPS 反向代理并设置 `COOKIE_SECURE=true`。
 
-默认数据目录为当前目录下 `data/`。可用 `DATA_DIR`、`PORT`、`HOST` 覆盖。首次初始化前请保持在可信网络内访问；远程访问请通过 HTTPS 反向代理并设置 `COOKIE_SECURE=true`。
+Node.js 22 内置 SQLite 会输出实验性 API 提示；本项目固定运行版本，无需独立数据库或 Redis。
 
-Node.js 22 的内置 SQLite 仍会打印实验性 API 提示，本项目固定运行版本并在同版本上测试。无独立数据库、Redis、微服务或外部前端 CDN。
+### NAS / Docker
 
-## 模拟验证
+通过 [GitHub Actions 离线打包工作流](https://github.com/zaynzhu/EmbyScope/actions/workflows/docker-offline.yml) 手动构建 **linux/amd64** 镜像，适用于 Intel x86_64 的极空间 Z4S。
 
-```sh
-npm test
-npm run check
-npm run demo
-```
+等待构建和独立验收都通过，下载 `embyscope-linux-amd64-verified` artifact，按[部署说明](docs/部署说明.md)导入镜像、配置端口及数据目录。artifact 保留 30 天；下载时核对源码 commit，`candidate` 不是已验收包。云端负责构建，本机无需 Docker 构建环境。
 
-演示在 `http://127.0.0.1:3900` 启动两台模拟 Emby，连接名均以“模拟”开头。第一次打开设置一个临时密码；测试数据不来自真实账号，其中第二台继续观看接口返回 403。退出演示进程后删除临时数据，不写入正式配置目录。模拟器及测试文件不包含在生产镜像中。
+---
 
-测试覆盖：两服独立 / 汇总、实际远端分页、搜索和分页、同名缺号、跨媒体类型编号、直接 / 传递编号冲突、季集分页、权限不足、单服离线保留旧缓存、凭据加密及不回传、会话和跨站请求保护、连接变更隔离、异常分页、2 秒限速、有限重试、海报缓存及格式限制。参见 [验收记录](docs/验收记录.md)。
+## 💡 日常使用
+
+### 接入和浏览片库
+
+在「服务器设置」添加 Emby 地址、用户名和密码。反代带子路径时完整保留，例如 `https://media.example.com/emby`，不要填 `/web/index.html` 或携带令牌的 URL。每台服务器可关联一个反代地址，共用身份与片库。
+
+顶部选择单服或全部服务器，在片库搜索和筛选。统计包含账号可见的媒体库、电影、剧集和单集；作品去重不把单集计入，同名不等于同一作品。最近入库与继续观看每服最多读取 18 条，汇总最多展示 24 条，时间缺失时不猜测排序依据。
+
+### 查看观看记录
+
+Mac 的「Trakt 观看 → 账号与配置」使用自己的 Client ID 和设备码授权；Apple TV Infuse 的记录须先上传到同一 Trakt 账号。豆瓣已看通过独立同步保存评分、短评和海报，无需运行 PixelReel 或 WhatShot。
+
+Emby、Trakt 与豆瓣分别展示，不合并进度或冒充统一观看历史。Emby 播放次数、总时长、排行与趋势尚无可信历史来源，标为不可用；TTD 日志自动接入尚未实现。普通 Emby 会话与极影视续播活动检测也会明确区分。
+
+### 核对资源与缺集
+
+先查看「重复与刮削排查」的来源、编号和季范围，必要时读取资源位置。Mac 在片库或排查页打开「缺集检查」，按需读取指定来源的一部剧；不做批量读取或自动全库缺集扫描。
+
+编号缺口不证明文件缺失；「范围内连续」不代表整季齐全或可播放。「待确认」无需清零，跨来源有同编号也不代表剪辑版本一致。
+
+<details>
+<summary>网页版：按服务器浏览与 NSFW 海报</summary>
+
+片库筛选栏与顶部「数据来源」联动，切换服务器、搜索或类型时回到第一页。在「服务器设置 → 编辑」标记 NSFW 后，该连接的海报默认虚化，汇总作品任一来源带标签也会虚化。顶部按钮可统一显示或重新虚化；点击单张虚化海报先解除虚化，再次点击打开详情。
+
+标题和来源仍可直接打开详情，详情海报遵循相同规则。解锁只保留在当前页面会话，刷新或退出后恢复虚化；标签持久保存。这是显示偏好，浏览器仍会加载图片。
+
+</details>
+
+---
 
 ## 数据语义
+
+<details>
+<summary>展开：作品关联、缓存完整性、接口限制与资源路径</summary>
 
 1. 片库和视图走 `/Users/{UserId}/...`，季集走携带当前用户标识的 `/Shows/{Id}/Seasons` 和 `/Shows/{Id}/Episodes`，不调用全站计数或管理员用户列表。媒体库数代表该用户 `Views` 返回的顶层视图数量。
 2. 每个连接有独立 UUID；所有 ItemId、UserId、图片、缓存、详情与令牌均绑定本地服务器标识。允许不同服务器有相同内部编号。
@@ -77,7 +168,16 @@ npm run demo
 11. 兼容模式的单集明细在打开详情时按需读取并分页缓存。明细超时、不可用时单独提示；真实季计数与明细可用性分开，不用季计数虚构单集条目。
 12. 资源位置在打开详情或点击「读取位置」时，通过当前用户的条目详情读取 `Path` 与 `MediaSources.Path`，缓存 24 小时。只回传绝对本地路径；远程 URL 和可能带认证信息的路径隐藏。路径可能属于容器、STRM 文件或虚拟目录，不保证是 NAS 的物理路径。接口无权限或不提供路径时明确提示；404 / 403 清掉旧路径，网络失败可保留标时的旧缓存。
 
+</details>
+
+---
+
 ## 更新策略与重复条目
+
+Emby 自动更新默认暂停，Trakt 自动同步独立设置；暂停自动更新不等于离线。
+
+<details>
+<summary>展开：更新周期、暂停边界与重复资源判定</summary>
 
 「服务器设置」顶部有**自动更新总开关**，默认暂停，状态持久化；网页版在每台服务器卡片内提供周期表单；Mac 版在该连接的「编辑」窗口内设置。保存周期不会自动开启总开关。
 
@@ -104,7 +204,13 @@ Mac 的片库状态栏及服务器设置可打开「同步记录」，查看服�
 
 服务器筛选只影响列表范围，详情中的关联记录会对照全部连接缓存，并明确提示范围。总记录数包含当前记录，逐条列出服务器、作品编号、季范围与按需读取的路径。一条记录可有多个资源路径或媒体版本，路径数量不增加记录数。无共享编号的条目也可按同名同年或同服相同文件路径提供人工核对线索；未匹配到其他记录不代表没有重复。这里不比较文件内容、不判断文件可否删除，也不操作远端文件。详细判定见[桌面版使用说明](docs/macOS使用说明.md)。
 
-## 安全与保存
+</details>
+
+---
+
+## 🔒 安全与保存
+
+Mac 配置位于 `~/Library/Application Support/EmbyScope/`，与 App 文件分开；网页版默认使用项目的 `data/`。二者不自动同步，导入与备份步骤见[安装与备份](docs/macOS安装与备份.md)。
 
 - 管理员密码使用 scrypt 加盐哈希；会话仅保存随机令牌的 SHA-256，浏览器 Cookie 为 HttpOnly、SameSite=Strict，默认 7 天有效。
 - Emby 用户名、密码、用户标识及令牌使用 AES-256-GCM 加密，响应只包含允许展示的元数据。前端表单输入会发送到本应用后端，已保存凭据绝不通过读取接口回传。
@@ -115,42 +221,68 @@ Mac 的片库状态栏及服务器设置可打开「同步记录」，查看服�
 - 允许连接 NAS、局域网等私有地址，这是本地管理员明确选择的功能；不是供任意公网访客使用的 URL 代理。
 - 账号密码通过 HTTP 地址发往 Emby 时链路不加密；远程服务器建议使用 HTTPS。TLS 校验保持启用，不自动跟随重定向携带令牌。
 
-## Docker / 极空间 Z4S
+---
 
-使用 [GitHub Actions](https://github.com/zaynzhu/EmbyScope/actions/workflows/docker-offline.yml) 手动构建 `linux/amd64` 镜像离线包。构建和容器验收全部在 GitHub 托管 runner 中执行，无需在 Mac 或 NAS 上安装构建工具。
+## 📚 文档导航
 
-完整部署步骤、可复用 bridge 网络、配置目录权限、升级、备份和回滚见 [中文部署说明](docs/部署说明.md)。验收通过的 artifact 名称为 `embyscope-linux-amd64-verified`，保留 30 天。下载前确认对应源码 commit；不要把 `candidate` 当作已验收包。
+| 文档 | 内容 |
+| :--- | :--- |
+| [Mac 使用说明](docs/macOS使用说明.md) | 导航、观看记录、缺集检查及各版本行为 |
+| [Mac 安装与备份](docs/macOS安装与备份.md) | 安装、升级、离线导入、备份与恢复 |
+| [NAS 部署说明](docs/部署说明.md) | 云端打包、极空间部署、环境变量与排错 |
+| [Mac 验收记录](docs/macOS验收记录.md) | 原生界面的验证结果与未验证边界 |
+| [网页版验收记录](docs/验收记录.md) | 模拟接口、页面和容器验收 |
+| [设计审查](docs/设计审查.md) | 功能设计、取舍与审查依据 |
+| [项目经验库](docs/lessons/INDEX.md) | 已验证方案、已知问题与适用条件 |
 
-## 代码结构
+---
 
-```text
-src/server.js      HTTP、认证、会话、静态页面和 API
-src/store.js       SQLite 与 AES-GCM 加密
-src/emby.js        限速、超时、重试与 Emby 请求
-src/service.js     连接、同步、缓存、统计与海报
-src/sync-history.js  服务器同步执行记录
-src/douban.js      独立豆瓣已看、同步进度与任务接续
-src/douban-posters.js  豆瓣海报查询、下载与补全
-src/poster-s3.js   可配置的 S3 签名读取与镜像上传
-src/trakt.js       独立 Trakt 授权、观看快照与首页摘要
-src/trakt-posters.js  按作品 ID 获取并缓存 Trakt／TMDB 海报
-src/identity.js    数据白名单和保守去重
-src/resources.js   资源路径白名单与敏感地址过滤
-src/home.js        基于缓存的账号观看快照
-src/comparison.js  资源重复线索与元数据疑点
-src/episode-audit.js  基于完整单集快照的编号缺口与跨来源对照
-src/playback.js    当前账号会话读取
-src/playback-activity.js  续播变化的兼容活动检测
-desktop/          SwiftUI 原生界面、桌面内核入口与模拟数据
-public/           中文响应式界面
-test/             模拟 Emby 与自动化测试
-scripts/          演示、云端打包、容器验收
+## 🤝 开发与验证
+
+业务内核使用 JavaScript，原生界面使用 SwiftUI。修改前同时阅读 [AGENTS.md](AGENTS.md) 与 [CLAUDE.md](CLAUDE.md)，排障前查询经验库。
+
+```bash
+fnm use
+npm test
+npm run check
 ```
 
-接口依据：[Emby 用户认证](https://dev.emby.media/doc/restapi/User-Authentication.html)、[用户片库读取](https://dev.emby.media/doc/restapi/Browsing-the-Library.html)、[ItemsService](https://dev.emby.media/reference/RestAPI/ItemsService.html)。真实 Emby 版本、反向代理和账号权限仍需要使用自己的连接进行实机验证。
+Mac 原生相关改动再运行：
 
-排障前查阅[经验库索引](docs/lessons/INDEX.md)，核对适用条件和验证范围。
+```bash
+swift test --package-path desktop
+```
 
-### 网页版按服务器浏览与 NSFW 海报
+测试覆盖多服隔离、作品关联、分页完整性、权限失败、凭据保护、限流、缓存和缺集判定等。模拟通过不代替真实服务器验收；范围见上方验收记录。
 
-片库筛选栏可直接选择某台 Emby，与顶部「数据来源」联动；切换服务器、搜索或类型时回到第一页。在「服务器设置 → 编辑」勾选 NSFW 后，该连接的海报默认虚化，汇总作品任一来源带标签也会虚化。顶部按钮可一键显示或重新虚化，点击单张虚化海报只解除这一张，再次点击打开详情。标题和来源仍可直接打开详情，详情海报遵循相同规则。解锁只保留在当前页面会话，刷新或退出后恢复虚化；标签持久保存。该功能是显示偏好，图片仍会由浏览器加载。
+使用独立分支提交单一职责的变更，提交信息遵循 `type: 中文描述`。提交 PR 时附相关验证结果，不提交真实凭据、配置备份或私人片库数据。
+
+<details>
+<summary>代码结构</summary>
+
+```text
+src/server.js          HTTP、认证、会话、静态页面和 API
+src/store.js           SQLite 与凭据加密
+src/emby.js            Emby 请求、限流、超时与重试
+src/service.js         连接、同步、缓存、统计与海报
+src/identity.js        作品标识、数据白名单与保守归组
+src/comparison.js      重复线索与元数据疑点
+src/episode-audit.js   缺集检查与跨来源对照
+src/resources.js       资源路径与敏感信息过滤
+src/home.js            首页观看快照
+src/playback*.js       会话读取与兼容活动检测
+src/sync-history.js    服务器同步执行记录
+src/douban*.js         豆瓣已看、列表解析与海报补全
+src/trakt*.js          Trakt 授权、观看快照与海报缓存
+src/poster-s3.js       S3 签名读取与镜像上传
+desktop/              SwiftUI 界面、数据模型与桌面内核入口
+public/               中文响应式网页界面
+test/                 模拟 Emby 与业务测试
+scripts/              演示、构建、迁移与容器验收
+```
+
+</details>
+
+接口依据：[Emby 用户认证](https://dev.emby.media/doc/restapi/User-Authentication.html)、[用户片库读取](https://dev.emby.media/doc/restapi/Browsing-the-Library.html)、[ItemsService](https://dev.emby.media/reference/RestAPI/ItemsService.html)。界面最初参考 TTD 的媒体概览信息顺序，未读取或复制 TTD 凭据，也未改动其配置。
+
+项目目前未提供 LICENSE 文件，尚未声明开源许可证。Node.js 运行时打包时保留其自身许可文件。
